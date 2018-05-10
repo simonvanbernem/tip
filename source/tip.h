@@ -12,7 +12,7 @@ using f64 = double;
 
 #define TIP_USE_RDTSC
 
-const u64 event_buffer_size = 1024 * 1024;
+const u64 tip_event_buffer_size = 1024 * 1024;
 
 
 #ifdef TIP_DISABLED
@@ -24,7 +24,10 @@ const u64 event_buffer_size = 1024 * 1024;
 	#define TIP_PROFILE_ASYNC_START(id)
 	#define TIP_PROFILE_ASYNC_STOP(id)
 #else
-	#define TIP_PROFILE_SCOPE(id) Scope_Profiler profauto##__LINE__(id);
+
+	#define TIP_CONCAT_LINE_NUMBER(x, y) x ## y // and you also need this somehow. c++ is stupid
+	#define TIP_CONCAT_LINE_NUMBER2(x, y) TIP_CONCAT_LINE_NUMBER(x, y) // this just concats "profauto" and the line number
+	#define TIP_PROFILE_SCOPE(id) tip_Scope_Profiler TIP_CONCAT_LINE_NUMBER2(profauto, __LINE__)(id); //for id=0 and and line 23, this expands to "tip_Scope_Profiler profauto23(0);"
 
 	#define TIP_PROFILE_START(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::start);
 	#define TIP_PROFILE_STOP(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::stop);
@@ -135,11 +138,11 @@ void tip_unlock_mutex(Mutex mutex){
 }
 
 inline void get_new_event_buffer_if_necessairy(){
-	if(tip_thread_state.current_position_in_event_buffer < event_buffer_size)
+	if(tip_thread_state.current_position_in_event_buffer < tip_event_buffer_size)
 		return;
 
 	tip_lock_mutex(tip_thread_state.event_buffers_mutex);
-	tip_thread_state.current_event_buffer = (tip_Event*) malloc(event_buffer_size * sizeof(tip_Event));
+	tip_thread_state.current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
 	tip_thread_state.current_position_in_event_buffer = 0;
 	tip_thread_state.event_buffers.push_back(tip_thread_state.current_event_buffer);
 	tip_unlock_mutex(tip_thread_state.event_buffers_mutex);
@@ -151,15 +154,15 @@ void tip_save_profile_event(u64 timestamp, u64 name_index, tip_Event_Type type){
 	tip_thread_state.current_position_in_event_buffer++;
 }
 
-struct Scope_Profiler{
+struct tip_Scope_Profiler{
 	u64 name_index;
 
-	Scope_Profiler(u64 id){
+	tip_Scope_Profiler(u64 id){
 		tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::start);
 		name_index = id;
 	}
 
-	~Scope_Profiler(){
+	~tip_Scope_Profiler(){
 		tip_save_profile_event(tip_get_timestamp(), name_index, tip_Event_Type::stop);
 	}
 };
@@ -174,7 +177,7 @@ void tip_thread_init(){
 
 	tip_thread_state.thread_id = tip_get_thread_id();
 
-	tip_thread_state.current_event_buffer = (tip_Event*) malloc(event_buffer_size * sizeof(tip_Event));
+	tip_thread_state.current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
 	tip_thread_state.current_position_in_event_buffer = 0;
 
 	tip_thread_state.event_buffers.push_back(tip_thread_state.current_event_buffer);
@@ -250,7 +253,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 		std::vector<tip_Event> thread_events;
 
 		for(tip_Event* event_buffer : thread_state->event_buffers){
-			int events_in_buffer = event_buffer_size;
+			int events_in_buffer = tip_event_buffer_size;
 
 			if(event_buffer == thread_state->current_event_buffer)
 				events_in_buffer = int(thread_state->current_position_in_event_buffer);
@@ -265,7 +268,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 
 		if(erase_snapshot_data_from_internal_state){
 			thread_state->event_buffers.clear();
-			thread_state->current_event_buffer = (tip_Event*) malloc(event_buffer_size * sizeof(tip_Event));
+			thread_state->current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
 			thread_state->current_position_in_event_buffer = 0;
 			thread_state->event_buffers.push_back(thread_state->current_event_buffer);
 		}
@@ -287,37 +290,95 @@ s64 tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, std::string file_n
 
 	bool first = true;
 
+	std::vector<tip_Event> event_stack;
+
 	for(int thread_index = 0; thread_index < snapshot.thread_ids.size(); thread_index++){
 		s32 thread_id = snapshot.thread_ids[thread_index];
 		for(tip_Event event : snapshot.events[thread_index]){
+
+			if(event.type == tip_Event_Type::start) //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
+				event_stack.push_back(event);
+
+			else if(event.type == tip_Event_Type::stop){ //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
+				if(event_stack.empty())
+					event_stack.push_back(event);
+				else{
+					tip_Event last_event_on_stack = event_stack[event_stack.size() - 1];
+					if(last_event_on_stack.type == tip_Event_Type::start && last_event_on_stack.name_index == event.name_index){
+						event_stack.pop_back();
+
+						if(first)
+							first = false;
+						else
+							fprintf(file, ",\n");
+
+						const char* name = snapshot.names[event.name_index].c_str();
+						f64 timestamp = f64(last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
+						f64 duration = f64(event.timestamp - last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
+
+
+						fprintf(file,"  {\"name\":\"%s\","
+										"\"cat\":\"PERF\","
+										"\"ph\":\"X\","
+										"\"pid\":%d,"
+										"\"tid\":%d,"
+										"\"id\":100,"
+										"\"ts\":%.16e,"
+										"\"dur\":%.16e}", name, snapshot.process_id, thread_id, timestamp, duration);
+					}
+					else{
+						event_stack.push_back(event);
+					}
+				}
+			}
+			else{    //the only type of events left are the asynchronous ones. we just print these directly
+				f64 timestamp = f64(event.timestamp) / snapshot.clocks_per_second * 1000000.;
+				const char* name = snapshot.names[event.name_index].c_str();
+				char type = '!';
+				if(event.type == tip_Event_Type::start_async)
+					type = 'b';
+				else
+					type = 'e';
+
+				if(first)
+					first = false;
+				else
+					fprintf(file, ",\n");
+
+				fprintf(file,"  {\"name\":\"%s\","
+								"\"cat\":\"PERF\","
+								"\"ph\":\"%c\","
+								"\"pid\":%d,"
+								"\"tid\":%d,"
+								"\"id\":100,"
+								"\"ts\":%.16e}", name, type, snapshot.process_id, thread_id, timestamp);
+			}
+		}
+
+		for(tip_Event event : event_stack){ //print all start and stop events, that don't have a corresponding event they could form a duration event with
+			f64 timestamp = f64(event.timestamp) / snapshot.clocks_per_second * 1000000.;
+			const char* name = snapshot.names[event.name_index].c_str();
+			char type = '!';
+			if(event.type == tip_Event_Type::start)
+				type = 'B';
+			else
+				type = 'E';
+
 			if(first)
 				first = false;
 			else
 				fprintf(file, ",\n");
 
-			char type = '!';
-
-			f64 timestamp = f64(event.timestamp) / snapshot.clocks_per_second * 1000000.;
-			const char* name = snapshot.names[event.name_index].c_str();
-
-			switch(event.type){
-				case tip_Event_Type::start:
-					type = 'B'; break;
-				case tip_Event_Type::stop:
-					type = 'E'; break;
-				case tip_Event_Type::start_async:
-					type = 'b'; break;
-				case tip_Event_Type::stop_async:
-					type = 'e'; break;
-			}
 			fprintf(file,"  {\"name\":\"%s\","
 							"\"cat\":\"PERF\","
 							"\"ph\":\"%c\","
 							"\"pid\":%d,"
 							"\"tid\":%d,"
 							"\"id\":100,"
-							"\"ts\":%20.10f}", name, type, snapshot.process_id, thread_id, timestamp);
+							"\"ts\":%.16e}", name, type, snapshot.process_id, thread_id, timestamp);
 		}
+
+		event_stack.clear();
 	}
 
 	fprintf(file, "\n],\n\"displayTimeUnit\": \"ns\"\n}");

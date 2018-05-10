@@ -31,13 +31,17 @@ void do_stuff_b(bool b){
 
 void do_stuff_c(){
 	TIP_PROFILE_SCOPE(2);
+	TIP_PROFILE_SCOPE(2);
 	sleep(4);
 	do_stuff_b(true);
 	do_stuff_b(false);
 	sleep(10);
+	TIP_PROFILE_ASYNC_START(1);
 	for(int i=0;i<10;i++){
 		do_stuff_b(false);
 	}
+	TIP_PROFILE_ASYNC_STOP(2);
+
 	sleep(1);
 }
 
@@ -47,7 +51,10 @@ void main(){
 	assert(0 == tip_add_name("do_stuff_a"));
 	assert(1 == tip_add_name("do_stuff_b"));
 	assert(2 == tip_add_name("do_stuff_c"));
+	tip_save_profile_event(tip_get_timestamp(), 0, tip_Event_Type::start);
+	TIP_PROFILE_ASYNC_START(2);
 	do_stuff_c();
+	TIP_PROFILE_ASYNC_STOP(1);
 
 	tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "test.json");
 }
