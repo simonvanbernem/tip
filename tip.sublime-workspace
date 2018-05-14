@@ -4,6 +4,34 @@
 		"selected_items":
 		[
 			[
+				"star",
+				"start_async"
+			],
+			[
+				"MAKR",
+				"MAKRO_EXPAND"
+			],
+			[
+				"tip_Event",
+				"tip_Event_Type"
+			],
+			[
+				"curren",
+				"current_position_in_event_buffer"
+			],
+			[
+				"event",
+				"event_buffer_size"
+			],
+			[
+				"current",
+				"current_event_buffer"
+			],
+			[
+				"file",
+				"file_name"
+			],
+			[
 				"phy",
 				"physics_time_is_running"
 			],
@@ -408,10 +436,6 @@
 				"PROFILE_FUNCTION_SHORT"
 			],
 			[
-				"event",
-				"event_type"
-			],
-			[
 				"add",
 				"address"
 			],
@@ -484,41 +508,62 @@
 				"Interface_Element_Info"
 			],
 			[
-				"current",
-				"current_frame_drawn_interface_elements"
-			],
-			[
 				"eleme",
 				"element"
 			],
 			[
 				"element",
 				"element_id"
-			],
-			[
-				"Interf",
-				"Interface_Element"
-			],
-			[
-				"draw_deb",
-				"draw_debug_overlay_element"
-			],
-			[
-				"INt",
-				"Interface_Element_Debug_Info"
-			],
-			[
-				"interf",
-				"interface_element_debug_info_hierarchie"
-			],
-			[
-				"hier",
-				"hierarchie_size"
 			]
 		]
 	},
 	"buffers":
 	[
+		{
+			"file": "compile.bat",
+			"settings":
+			{
+				"buffer_size": 234,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"file": "source/tip.h",
+			"settings":
+			{
+				"buffer_size": 11114,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"contents": "Searching 11 files for \".15e\" (case sensitive)\n\nB:\\tip\\source\\tip.h:\n  324  \t\t\t\t\t\t\t\t\t\t\"\\\"tid\\\":%d,\"\n  325  \t\t\t\t\t\t\t\t\t\t\"\\\"id\\\":100,\"\n  326: \t\t\t\t\t\t\t\t\t\t\"\\\"ts\\\":%.15e,\"\n  327: \t\t\t\t\t\t\t\t\t\t\"\\\"dur\\\":%.15e}\", name, snapshot.process_id, thread_id, timestamp, duration);\n  328  \t\t\t\t\t}\n  329  \t\t\t\t\telse{\n  ...\n  352  \t\t\t\t\t\t\t\t\"\\\"tid\\\":%d,\"\n  353  \t\t\t\t\t\t\t\t\"\\\"id\\\":100,\"\n  354: \t\t\t\t\t\t\t\t\"\\\"ts\\\":%.15e}\", name, type, snapshot.process_id, thread_id, timestamp);\n  355  \t\t\t}\n  356  \t\t}\n  ...\n  376  \t\t\t\t\t\t\t\"\\\"tid\\\":%d,\"\n  377  \t\t\t\t\t\t\t\"\\\"id\\\":100,\"\n  378: \t\t\t\t\t\t\t\"\\\"ts\\\":%.15e}\", name, type, snapshot.process_id, thread_id, timestamp);\n  379  \t\t}\n  380  \n\n4 matches in 1 file\n",
+			"settings":
+			{
+				"buffer_size": 655,
+				"line_ending": "Windows",
+				"name": "Find Results",
+				"scratch": true
+			}
+		},
+		{
+			"file": "test.json",
+			"settings":
+			{
+				"buffer_size": 36620,
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"file": "source/test.cpp",
+			"settings":
+			{
+				"buffer_size": 1072,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			}
+		}
 	],
 	"build_system": "",
 	"build_system_choices":
@@ -583,10 +628,19 @@
 	},
 	"expanded_folders":
 	[
-		"/B/tip"
+		"/B/tip",
+		"/B/tip/build",
+		"/B/tip/source"
 	],
 	"file_history":
 	[
+		"/B/space/source/engine/win32_time.h",
+		"/I/nbui.log",
+		"/I/regeln.txt",
+		"/B/tip/debug.bat",
+		"/B/tip/build/test.json",
+		"/B/tip/tip.h",
+		"/B/tip/test.cpp",
 		"/B/mmi/source/include.h",
 		"/G/Users/Simon/Downloads/clumsy-0.2-win64/config.txt",
 		"/G/Google Drive/Informatik Master Studium/MMI/Vorlesungsnotizen.txt",
@@ -707,24 +761,18 @@
 		"/C/Workspaces/noBullshitGUI/source/glfw_test.cpp",
 		"/C/Workspaces/noBullshitGUI/source/interface elements/window.cpp",
 		"/C/Workspaces/noBullshitGUI/source/interface elements/input.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/threads.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/opengl.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/windows.cpp",
-		"/C/Workspaces/noBullshitGUI/source/shader/fragment_shader.glsl",
-		"/C/Workspaces/noBullshitGUI/source/test_application.cpp",
-		"/C/Workspaces/noBullshitGUI/source/shader/fragment_shader.gsls",
-		"/C/Workspaces/noBullshitGUI/source/shader/vertex_shader.gsls",
-		"/C/Workspaces/noBullshitGUI/source/glad core/glad.c"
+		"/C/Workspaces/noBullshitGUI/source/interface elements/threads.cpp"
 	],
 	"find":
 	{
-		"height": 24.0
+		"height": 49.0
 	},
 	"find_in_files":
 	{
 		"height": 448.0,
 		"where_history":
 		[
+			""
 		]
 	},
 	"find_state":
@@ -732,6 +780,57 @@
 		"case_sensitive": true,
 		"find_history":
 		[
+			"strip_sequence",
+			"aligned_string",
+			"PROFILE_SCOPE",
+			"tip_Snap",
+			"init",
+			".15e",
+			"id",
+			"event",
+			"last_event_on_stack",
+			"event_stack",
+			"end",
+			"while",
+			"Scope_Profiler",
+			"event_buffer_size",
+			"CONCAT_LINE_NUMBER",
+			"MAKRO_EXPAND",
+			"MAKRO_EXPAND2",
+			"TOKENPASTE",
+			"TOKENPASTE2",
+			"UNIQUE",
+			"main",
+			"current_posi",
+			"get_reliable_timestamp_frequency",
+			"get_reliable_timestamp",
+			"tip_thread_state",
+			"get_thread_id",
+			"thread_index",
+			"events_in_buffer",
+			"thread_state.",
+			"thread_state",
+			"tip_save_profile_event",
+			"save_profile_event",
+			"unlock_mutex",
+			"lock_mutex",
+			"get_timestamp",
+			";",
+			"serialized_state",
+			"type",
+			"serialized_state",
+			"start",
+			"start_async",
+			"QueryPerformanceCounter",
+			"thread_states_mutex",
+			"event_buffers_mutex",
+			"#ifdef PROFILER_ACTIVATED",
+			"PROFILER_ACTIVATED",
+			"TIP_PROFILER_USE_RDTSC",
+			"PROFILER_USE_RDTSC",
+			"PROFILER_ACTIVATED",
+			"TIP_DISABLED",
+			"timestamps"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -739,6 +838,7 @@
 		"regex": false,
 		"replace_history":
 		[
+			".16e"
 		],
 		"reverse": false,
 		"show_context": true,
@@ -749,14 +849,189 @@
 	"groups":
 	[
 		{
+			"selected": 1,
 			"sheets":
 			[
+				{
+					"buffer": 0,
+					"file": "compile.bat",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 234,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								97,
+								97
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Batch File/Batch File.sublime-syntax"
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 4,
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "source/tip.h",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 11114,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								270,
+								270
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/C++/C++.sublime-syntax",
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 655,
+						"regions":
+						{
+							"match":
+							{
+								"flags": 112,
+								"regions":
+								[
+									[
+										157,
+										161
+									],
+									[
+										191,
+										195
+									],
+									[
+										379,
+										383
+									],
+									[
+										551,
+										555
+									]
+								],
+								"scope": ""
+							}
+						},
+						"selection":
+						[
+							[
+								0,
+								0
+							]
+						],
+						"settings":
+						{
+							"detect_indentation": false,
+							"line_numbers": false,
+							"output_tag": 1,
+							"result_base_dir": "",
+							"result_file_regex": "^([^ \t].*):$",
+							"result_line_regex": "^ +([0-9]+):",
+							"scroll_past_end": true,
+							"syntax": "Packages/Default/Find Results.hidden-tmLanguage"
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 3,
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "test.json",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 36620,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								14575,
+								14575
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 1860.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 2,
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "source/test.cpp",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1072,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								231,
+								231
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/C++/C++.sublime-syntax",
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 1,
+					"type": "text"
+				}
 			]
 		}
 	],
 	"incremental_find":
 	{
-		"height": 24.0
+		"height": 27.0
 	},
 	"input":
 	{
@@ -797,7 +1072,7 @@
 	"project": "tip.sublime-project",
 	"replace":
 	{
-		"height": 44.0
+		"height": 50.0
 	},
 	"save_all_on_build": true,
 	"select_file":

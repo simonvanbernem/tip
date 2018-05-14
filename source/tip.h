@@ -2,7 +2,15 @@
 #include <stdint.h>
 #include <vector>
 #include <assert.h>
+
+#ifdef TIP_PORTABLE
+#include <mutex>
+#include <chrono>
+#include <thread>
+#include <map>
+#elif defined(TIP_WINDOWS)
 #include "Windows.h"
+#endif
 
 using u64 = uint64_t;
 using u32 = uint32_t;
@@ -61,35 +69,88 @@ struct tip_Snapshot{
 	std::vector<std::vector<tip_Event>> events; // the inner array contains the events of one thread.
 };
 
+#ifdef TIP_PORTABLE
+struct Mutex{
+	std::mutex* mutex;
+};
+
+Mutex tip_create_mutex(){
+	return {new std::mutex};
+}
+
+void tip_lock_mutex(Mutex mutex){
+	mutex.mutex->lock();
+}
+
+void tip_unlock_mutex(Mutex mutex){
+	mutex.mutex->unlock();
+}
+
+u64 tip_get_timestamp(){
+	assert(std::chrono::high_resolution_clock::is_steady);
+	auto timepoint = std::chrono::high_resolution_clock::now().time_since_epoch();
+	auto timepoint_as_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timepoint);
+	return timepoint_as_duration.count();
+}
+
+s32 tip_get_thread_id(){
+	static std::mutex vector_mutex;
+	static s32 current_thread_id = 0;
+	static std::map<std::thread::id, s32> thread_id_map;
+
+	std::thread::id thread_id = std::this_thread::get_id();
+	s32 thread_id_s32 = 0; 
+
+	vector_mutex.lock();
+	
+	auto iterator = thread_id_map.find(thread_id);
+	if(iterator != thread_id_map.end()){
+		thread_id_s32 = thread_id_map[thread_id];
+	}
+	else{
+		thread_id_map[thread_id] = current_thread_id;
+		thread_id_s32 = current_thread_id;
+		current_thread_id++;
+	}
+	vector_mutex.unlock();
+
+	return thread_id_s32;
+}
+
+s32 tip_get_process_id(){
+	return 0;
+}
+
+u64 tip_get_reliable_timestamp(){
+	return tip_get_timestamp();
+}
+
+u64 tip_get_reliable_timestamp_frequency(){
+	return 1000000000;
+}
+
+#elif defined(TIP_WINDOWS)
+
+//THREADING
 struct Mutex{
 	HANDLE handle;
 };
 
-struct tip_Thread_State{
-	bool initialized = false;
-	s32 thread_id;
+Mutex tip_create_mutex(){
+	Mutex mutex;
+	mutex.handle = CreateMutex(0, false, 0);
+	return mutex;
+}
 
-	tip_Event* current_event_buffer;
-	u64 current_position_in_event_buffer;
+void tip_lock_mutex(Mutex mutex){
+	WaitForSingleObject(mutex.handle, INFINITE);
+}
 
-	Mutex event_buffers_mutex;
-	std::vector<tip_Event*> event_buffers;
-};
+void tip_unlock_mutex(Mutex mutex){
+	ReleaseMutex(mutex.handle);
+}
 
-struct tip_Global_State{
-	bool initialized = false;
-	s32 process_id;
-	f64 clocks_per_second;
-	std::vector<std::string> names;
-
-	Mutex thread_states_mutex;
-	std::vector<tip_Thread_State*> thread_states;
-};
-
-thread_local tip_Thread_State tip_thread_state;
-static tip_Global_State tip_global_state;
-
-
+//TIMING
 u64 tip_get_timestamp(){
 #ifdef TIP_USE_RDTSC
 	return __rdtsc();
@@ -120,22 +181,32 @@ u64 tip_get_reliable_timestamp_frequency(){
 	return temp.QuadPart;
 }
 
-Mutex tip_create_mutex(){
-	Mutex mutex;
-	mutex.handle = CreateMutex(0, false, 0);
-	return mutex;
-}
+#endif
 
-void tip_lock_mutex(Mutex mutex, double timeout_in_seconds = 0){
-	if (timeout_in_seconds == 0)
-		WaitForSingleObject(mutex.handle, INFINITE);
-	else
-		WaitForSingleObject(mutex.handle, (DWORD)(timeout_in_seconds * 1000.));
-}
+struct tip_Thread_State{
+	bool initialized = false;
+	s32 thread_id;
 
-void tip_unlock_mutex(Mutex mutex){
-	ReleaseMutex(mutex.handle);
-}
+	tip_Event* current_event_buffer;
+	u64 current_position_in_event_buffer;
+
+	Mutex event_buffers_mutex;
+	std::vector<tip_Event*> event_buffers;
+};
+
+struct tip_Global_State{
+	bool initialized = false;
+	s32 process_id;
+	f64 clocks_per_second;
+	std::vector<std::string> names;
+
+	Mutex thread_states_mutex;
+	std::vector<tip_Thread_State*> thread_states;
+};
+
+thread_local tip_Thread_State tip_thread_state;
+static tip_Global_State tip_global_state;
+
 
 inline void get_new_event_buffer_if_necessairy(){
 	if(tip_thread_state.current_position_in_event_buffer < tip_event_buffer_size)
@@ -195,7 +266,7 @@ f64 tip_global_init(){
 	if(tip_global_state.initialized)
 		return 1. / tip_global_state.clocks_per_second;
 
-#ifdef TIP_USE_RDTSC
+#if defined(TIP_USE_RDTSC) && defined(TIP_WINDOWS) 
 	u64 reliable_start = tip_get_reliable_timestamp();
 	u64 rdtsc_start = __rdtsc();
 
