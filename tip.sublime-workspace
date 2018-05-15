@@ -532,9 +532,9 @@
 			"file": "source/tip.h",
 			"settings":
 			{
-				"buffer_size": 11114,
+				"buffer_size": 12448,
 				"encoding": "UTF-8",
-				"line_ending": "Windows"
+				"line_ending": "Unix"
 			}
 		},
 		{
@@ -548,20 +548,20 @@
 			}
 		},
 		{
-			"file": "test.json",
-			"settings":
-			{
-				"buffer_size": 36620,
-				"line_ending": "Windows"
-			}
-		},
-		{
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 1072,
+				"buffer_size": 1127,
 				"encoding": "UTF-8",
-				"line_ending": "Windows"
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "test.json",
+			"settings":
+			{
+				"buffer_size": 34988,
+				"line_ending": "Unix"
 			}
 		}
 	],
@@ -628,12 +628,12 @@
 	},
 	"expanded_folders":
 	[
-		"/B/tip",
-		"/B/tip/build",
-		"/B/tip/source"
+		"/home/simon/workspaces/tip",
+		"/home/simon/workspaces/tip/source"
 	],
 	"file_history":
 	[
+		"/home/simon/workspaces/tip/test.json",
 		"/B/space/source/engine/win32_time.h",
 		"/I/nbui.log",
 		"/I/regeln.txt",
@@ -760,12 +760,11 @@
 		"/C/Workspaces/ThePeer2PeerFileTransferProgrammThatIsFast/source/threads.cpp",
 		"/C/Workspaces/noBullshitGUI/source/glfw_test.cpp",
 		"/C/Workspaces/noBullshitGUI/source/interface elements/window.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/input.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/threads.cpp"
+		"/C/Workspaces/noBullshitGUI/source/interface elements/input.cpp"
 	],
 	"find":
 	{
-		"height": 49.0
+		"height": 35.0
 	},
 	"find_in_files":
 	{
@@ -849,7 +848,7 @@
 	"groups":
 	[
 		{
-			"selected": 1,
+			"selected": 4,
 			"sheets":
 			[
 				{
@@ -886,15 +885,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 11114,
+						"buffer_size": 12448,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								270,
-								270
+								2089,
+								2089
 							]
 						],
 						"settings":
@@ -903,10 +902,10 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 0.0,
+						"translation.y": 1074.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 0,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
@@ -969,49 +968,19 @@
 				},
 				{
 					"buffer": 3,
-					"file": "test.json",
-					"semi_transient": false,
-					"settings":
-					{
-						"buffer_size": 36620,
-						"regions":
-						{
-						},
-						"selection":
-						[
-							[
-								14575,
-								14575
-							]
-						],
-						"settings":
-						{
-							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
-							"tab_size": 2,
-							"translate_tabs_to_spaces": true
-						},
-						"translation.x": 0.0,
-						"translation.y": 1860.0,
-						"zoom_level": 1.0
-					},
-					"stack_index": 2,
-					"type": "text"
-				},
-				{
-					"buffer": 4,
 					"file": "source/test.cpp",
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 1072,
+						"buffer_size": 1127,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								231,
-								231
+								272,
+								272
 							]
 						],
 						"settings":
@@ -1025,13 +994,43 @@
 					},
 					"stack_index": 1,
 					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "test.json",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 34988,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								31598,
+								31598
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 3213.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
 				}
 			]
 		}
 	],
 	"incremental_find":
 	{
-		"height": 27.0
+		"height": 25.0
 	},
 	"input":
 	{
@@ -1072,7 +1071,7 @@
 	"project": "tip.sublime-project",
 	"replace":
 	{
-		"height": 50.0
+		"height": 46.0
 	},
 	"save_all_on_build": true,
 	"select_file":

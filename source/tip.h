@@ -87,7 +87,7 @@ void tip_unlock_mutex(Mutex mutex){
 }
 
 u64 tip_get_timestamp(){
-	assert(std::chrono::high_resolution_clock::is_steady);
+	//assert(std::chrono::high_resolution_clock::is_steady);
 	auto timepoint = std::chrono::high_resolution_clock::now().time_since_epoch();
 	auto timepoint_as_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timepoint);
 	return timepoint_as_duration.count();

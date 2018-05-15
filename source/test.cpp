@@ -47,7 +47,7 @@ void do_stuff_c(){
 	sleep(1);
 }
 
-void main(){
+int main(){
 	tip_global_init();
 	tip_thread_init();
 	assert(0 == tip_add_name("do_stuff_a"));
@@ -59,4 +59,5 @@ void main(){
 	TIP_PROFILE_ASYNC_STOP(1);
 
 	tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "test.json");
+	return 0;
 }
