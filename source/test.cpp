@@ -1,6 +1,6 @@
-//#define TIP_USE_RDTSC
-//#define TIP_WINDOWS
-#define TIP_PORTABLE
+#define TIP_USE_RDTSC
+#define TIP_WINDOWS
+// #define TIP_PORTABLE
 #include "tip.h"
 
 #include <assert.h>

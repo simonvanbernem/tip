@@ -551,16 +551,8 @@
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 1127,
+				"buffer_size": 1126,
 				"encoding": "UTF-8",
-				"line_ending": "Unix"
-			}
-		},
-		{
-			"file": "test.json",
-			"settings":
-			{
-				"buffer_size": 34988,
 				"line_ending": "Unix"
 			}
 		}
@@ -628,11 +620,11 @@
 	},
 	"expanded_folders":
 	[
-		"/home/simon/workspaces/tip",
-		"/home/simon/workspaces/tip/source"
+		"/B/tip"
 	],
 	"file_history":
 	[
+		"/B/tip/test.json",
 		"/home/simon/workspaces/tip/test.json",
 		"/B/space/source/engine/win32_time.h",
 		"/I/nbui.log",
@@ -759,8 +751,7 @@
 		"/C/Workspaces/noBullshitGUI/source/threads.cpp",
 		"/C/Workspaces/ThePeer2PeerFileTransferProgrammThatIsFast/source/threads.cpp",
 		"/C/Workspaces/noBullshitGUI/source/glfw_test.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/window.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/input.cpp"
+		"/C/Workspaces/noBullshitGUI/source/interface elements/window.cpp"
 	],
 	"find":
 	{
@@ -848,7 +839,7 @@
 	"groups":
 	[
 		{
-			"selected": 4,
+			"selected": 3,
 			"sheets":
 			[
 				{
@@ -876,7 +867,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 4,
+					"stack_index": 3,
 					"type": "text"
 				},
 				{
@@ -905,7 +896,7 @@
 						"translation.y": 1074.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 1,
 					"type": "text"
 				},
 				{
@@ -963,7 +954,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 3,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
@@ -972,15 +963,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 1127,
+						"buffer_size": 1126,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								272,
-								272
+								465,
+								465
 							]
 						],
 						"settings":
@@ -992,36 +983,6 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 1,
-					"type": "text"
-				},
-				{
-					"buffer": 4,
-					"file": "test.json",
-					"semi_transient": false,
-					"settings":
-					{
-						"buffer_size": 34988,
-						"regions":
-						{
-						},
-						"selection":
-						[
-							[
-								31598,
-								31598
-							]
-						],
-						"settings":
-						{
-							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
-							"tab_size": 2,
-							"translate_tabs_to_spaces": true
-						},
-						"translation.x": 0.0,
-						"translation.y": 3213.0,
-						"zoom_level": 1.0
-					},
 					"stack_index": 0,
 					"type": "text"
 				}
@@ -1030,7 +991,7 @@
 	],
 	"incremental_find":
 	{
-		"height": 25.0
+		"height": 27.0
 	},
 	"input":
 	{
@@ -1071,7 +1032,7 @@
 	"project": "tip.sublime-project",
 	"replace":
 	{
-		"height": 46.0
+		"height": 50.0
 	},
 	"save_all_on_build": true,
 	"select_file":
