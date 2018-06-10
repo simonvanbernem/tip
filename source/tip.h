@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <vector>
 #include <assert.h>
+#include <string.h>
+#include <stdlib.h>
 
 #ifdef TIP_PORTABLE
 #include <mutex>
@@ -12,36 +14,196 @@
 #include "Windows.h"
 #endif
 
-using u64 = uint64_t;
+using u8 = uint8_t;
 using u32 = uint32_t;
-using s64 = int64_t;
-using s32 = int32_t;
-using f64 = double;
+using u64 = uint64_t;
 
-#define TIP_USE_RDTSC
+using s32 = int32_t;
+using s64 = int64_t;
+
+using f32 = float;
+using f64 = double;
 
 const u64 tip_event_buffer_size = 1024 * 1024;
 
 
+template<typename T>
+struct Dynamic_Array{
+	T* buffer;
+	s64 size;
+	s64 capacity;
+	bool initialized = false;
+
+	void init(s64 initial_capacity = 32){
+		assert(!initialized);
+		if(initial_capacity > 0)
+			buffer = (T*) malloc(sizeof(T) * initial_capacity);
+		else 
+			buffer = nullptr;
+
+		capacity = initial_capacity;
+		size = 0;
+		initialized = true;
+	}
+
+	void insert(T element, s64 count = 1){
+		assert(initialized);
+		s64 new_size = size + count;
+
+		if(new_size > capacity){
+			capacity *= 2;
+			assert(new_size <= capacity);
+			realloc(buffer, capacity);
+		}
+
+		for(s64 i = size; i < new_size; i++){
+			buffer[i] = element;
+		}
+
+		size = new_size;
+	}
+
+	void insert(T* elements, s64 number_of_elements){
+		assert(initialized);
+		s64 new_size = size + number_of_elements;
+
+		if(new_size > capacity){
+			capacity *= 2;
+			assert(new_size <= capacity);
+			realloc(buffer, capacity);
+		}
+
+		memcpy(buffer + size, elements, number_of_elements);
+
+		size = new_size;
+	}
+
+	T& operator[](s64 index){
+		assert(initialized);
+		return buffer[index];
+	}
+
+	void destroy(){
+		assert(initialized);
+		free(buffer);
+		buffer = nullptr;
+		size = -1;
+		capacity = -1;
+		initialized = false;
+	}
+};
+
+struct String_Interning_Hash_Table{
+	Dynamic_Array<char> name_buffer;
+	Dynamic_Array<s64> name_indices;
+	s64 count;
+	bool initialized = false;
+
+	void init(s64 size = 256){
+		assert(!initialized);
+		name_buffer.init(size * 16); //just a random guess that on average a name will have 15 characters (+0 terminator)
+		name_indices.init(size);
+		name_indices.insert(-1, size);
+		initialized = true;
+	}
+
+	u32 fvn_hash(const char* string, s64 length)
+	{
+		u32 hash = 2166136261; // offset basis (32 bits)
+		for (s64 i = 0; i < length; i++){
+			hash ^= string[i];
+			hash *= 16777619;
+		}
+		return hash;
+	}
+
+	void resize_table(){
+		s64 new_size = name_indices.size * 2;
+		Dynamic_Array<s64> new_name_indices;
+		new_name_indices.init(new_size);
+		new_name_indices.insert(-1, new_size);
+
+		for(int i = 0; i < name_indices.size; i++){
+			if(name_indices[i] == -1)
+				return;
+
+			char* string = name_buffer.buffer + name_indices[i];
+			s64 string_length = strlen(string);
+			s64 hash_index = fvn_hash(string, string_length) % new_name_indices.size;
+
+			while(new_name_indices[hash_index] != -1) //linear probing, we know that this is a collision since every string is unique in the hashmap
+					hash_index = (hash_index + 1) % name_indices.size;
+
+			new_name_indices[hash_index] = name_indices[i];
+		}
+
+		name_indices.destroy();
+		name_indices = new_name_indices;
+	}
+
+	s64 intern_string(char* string){
+		assert(initialized);
+		s64 string_length = strlen(string);
+		s64 hash_index = fvn_hash(string, string_length) % name_indices.size;
+
+
+		while(name_indices[hash_index] != -1){ //linear probing
+			char* found_string = name_buffer.buffer + name_indices[hash_index];
+			bool equal = strcmp(string, found_string) == 0;
+
+			if(equal)
+				return name_indices[hash_index];
+			else
+				hash_index = (hash_index + 1) % name_indices.size;
+		}
+
+		s64 interned_string_id = name_buffer.size;
+		name_indices[hash_index] = interned_string_id;
+		name_buffer.insert(string, string_length + 1);
+		count++;
+
+		if(f32(count) > 2.f / 3.f * f32(name_indices.size))
+			resize_table();
+
+		return interned_string_id;
+	}
+
+	char* get_string(s64 id){
+		assert(initialized);
+		return name_buffer.buffer + id;
+	}
+
+	void destroy(){
+		assert(initialized);
+		name_buffer.destroy();
+		name_indices.destroy();
+		initialized = false;
+	}
+};
+
+
+
+#define TIP_USE_RDTSC
+
 #ifdef TIP_DISABLED
-	#define TIP_PROFILE_SCOPE(id)
+	#define TIP_PROFILE_SCOPE(name)
 
-	#define TIP_PROFILE_START(id)
-	#define TIP_PROFILE_STOP(id)
+	#define TIP_PROFILE_START(name)
+	#define TIP_PROFILE_STOP(name)
 
-	#define TIP_PROFILE_ASYNC_START(id)
-	#define TIP_PROFILE_ASYNC_STOP(id)
+	#define TIP_PROFILE_ASYNC_START(name)
+	#define TIP_PROFILE_ASYNC_STOP(name)
 #else
 
 	#define TIP_CONCAT_LINE_NUMBER(x, y) x ## y // and you also need this somehow. c++ is stupid
 	#define TIP_CONCAT_LINE_NUMBER2(x, y) TIP_CONCAT_LINE_NUMBER(x, y) // this just concats "profauto" and the line number
-	#define TIP_PROFILE_SCOPE(id) tip_Scope_Profiler TIP_CONCAT_LINE_NUMBER2(profauto, __LINE__)(id); //for id=0 and and line 23, this expands to "tip_Scope_Profiler profauto23(0);"
+	#define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_LINE_NUMBER2(profauto, __LINE__)(name); //for id=0 and and line 23, this expands to "tip_Scope_Profiler profauto23(0);"
 
-	#define TIP_PROFILE_START(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::start);
-	#define TIP_PROFILE_STOP(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::stop);
+	#define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::start);
+	#define TIP_PROFILE_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
 
-	#define TIP_PROFILE_ASYNC_START(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::start_async);
-	#define TIP_PROFILE_ASYNC_STOP(id) tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::stop_async);
+	#define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::start_async);
+	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop_async);
 #endif
 
 
@@ -55,7 +217,7 @@ enum class tip_Event_Type{
 
 struct tip_Event{
 	u64 timestamp;
-	u64 name_index;
+	s64 name_id;
 	tip_Event_Type type;
 };
 
@@ -64,7 +226,7 @@ struct tip_Snapshot{
 	s32 process_id;
 	u64 number_of_events;
 
-	std::vector<std::string> names;
+	String_Interning_Hash_Table names;
 	std::vector<s32> thread_ids;
 	std::vector<std::vector<tip_Event>> events; // the inner array contains the events of one thread.
 };
@@ -87,7 +249,6 @@ void tip_unlock_mutex(Mutex mutex){
 }
 
 u64 tip_get_timestamp(){
-	//assert(std::chrono::high_resolution_clock::is_steady);
 	auto timepoint = std::chrono::high_resolution_clock::now().time_since_epoch();
 	auto timepoint_as_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(timepoint);
 	return timepoint_as_duration.count();
@@ -183,22 +344,26 @@ u64 tip_get_reliable_timestamp_frequency(){
 
 #endif
 
+struct tip_Event_Buffer{
+	u8* data;
+	u8* end;
+	u8* current_position;
+	u8* position_of_first_event; //this is used to delete events from a buffer when making a snapshot
+	tip_Event_Buffer* next_buffer;
+};
+
 struct tip_Thread_State{
 	bool initialized = false;
 	s32 thread_id;
 
-	tip_Event* current_event_buffer;
-	u64 current_position_in_event_buffer;
-
-	Mutex event_buffers_mutex;
-	std::vector<tip_Event*> event_buffers;
+	tip_Event_Buffer* first_event_buffer;
+	tip_Event_Buffer* current_event_buffer;
 };
 
 struct tip_Global_State{
 	bool initialized = false;
 	s32 process_id;
 	f64 clocks_per_second;
-	std::vector<std::string> names;
 
 	Mutex thread_states_mutex;
 	std::vector<tip_Thread_State*> thread_states;
@@ -208,33 +373,50 @@ thread_local tip_Thread_State tip_thread_state;
 static tip_Global_State tip_global_state;
 
 
-inline void get_new_event_buffer_if_necessairy(){
-	if(tip_thread_state.current_position_in_event_buffer < tip_event_buffer_size)
-		return;
+void tip_get_new_event_buffer(){
+	tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) malloc(sizeof(tip_Event_Buffer));
+	new_buffer->data = (u8*) malloc(tip_event_buffer_size);
+	new_buffer->end = new_buffer->data + tip_event_buffer_size;
+	new_buffer->current_position = new_buffer->data;
+	new_buffer->position_of_first_event = new_buffer->data;
+	new_buffer->next_buffer = nullptr;
 
-	tip_lock_mutex(tip_thread_state.event_buffers_mutex);
-	tip_thread_state.current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
-	tip_thread_state.current_position_in_event_buffer = 0;
-	tip_thread_state.event_buffers.push_back(tip_thread_state.current_event_buffer);
-	tip_unlock_mutex(tip_thread_state.event_buffers_mutex);
+	tip_thread_state.current_event_buffer->next_buffer = new_buffer;
+	tip_thread_state.current_event_buffer = new_buffer;
 }
 
-void tip_save_profile_event(u64 timestamp, u64 name_index, tip_Event_Type type){
-	get_new_event_buffer_if_necessairy();
-	tip_thread_state.current_event_buffer[tip_thread_state.current_position_in_event_buffer] = {timestamp, name_index, type};
-	tip_thread_state.current_position_in_event_buffer++;
+void tip_save_profile_event(u64 timestamp, char* name, tip_Event_Type type){
+	u64 name_length_including_terminator = strlen(name) + 1;
+	u64 event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
+	
+	if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end)
+		tip_get_new_event_buffer();
+
+	tip_Event_Buffer* buffer = tip_thread_state.current_event_buffer; 
+
+	u8* data_pointer = buffer->current_position;
+	*((u64*)data_pointer) = timestamp;
+	data_pointer += sizeof(timestamp);
+	*((tip_Event_Type*)data_pointer) = type;
+	data_pointer += sizeof(type);
+	*((u64*)data_pointer) = name_length_including_terminator;
+	data_pointer += sizeof(name_length_including_terminator);
+	memcpy(data_pointer, name, name_length_including_terminator);
+	data_pointer += name_length_including_terminator;
+
+	buffer->current_position = data_pointer;
 }
 
 struct tip_Scope_Profiler{
-	u64 name_index;
+	char* name;
 
-	tip_Scope_Profiler(u64 id){
-		tip_save_profile_event(tip_get_timestamp(), id, tip_Event_Type::start);
-		name_index = id;
+	tip_Scope_Profiler(char* event_name){
+		tip_save_profile_event(tip_get_timestamp(), event_name, tip_Event_Type::start);
+		name = event_name;
 	}
 
 	~tip_Scope_Profiler(){
-		tip_save_profile_event(tip_get_timestamp(), name_index, tip_Event_Type::stop);
+		tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
 	}
 };
 
@@ -248,16 +430,22 @@ void tip_thread_init(){
 
 	tip_thread_state.thread_id = tip_get_thread_id();
 
-	tip_thread_state.current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
-	tip_thread_state.current_position_in_event_buffer = 0;
+	tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) malloc(sizeof(tip_Event_Buffer));
 
-	tip_thread_state.event_buffers.push_back(tip_thread_state.current_event_buffer);
-	tip_thread_state.event_buffers_mutex = tip_create_mutex();
-	tip_thread_state.initialized = true;
+	new_buffer->data =(u8*) malloc(tip_event_buffer_size);
+	new_buffer->end = new_buffer->data + tip_event_buffer_size;
+	new_buffer->current_position = new_buffer->data;
+	new_buffer->position_of_first_event = new_buffer->data;
+	new_buffer->next_buffer = nullptr;
+
+	tip_thread_state.current_event_buffer = new_buffer;
+	tip_thread_state.first_event_buffer = new_buffer; 
 
 	tip_lock_mutex(tip_global_state.thread_states_mutex);
 	tip_global_state.thread_states.push_back(&tip_thread_state);
 	tip_unlock_mutex(tip_global_state.thread_states_mutex);
+
+	tip_thread_state.initialized = true;
 #endif
 }
 
@@ -296,22 +484,12 @@ f64 tip_global_init(){
 #endif
 }
 
-int tip_add_name(std::string name){
-#ifndef TIP_DISABLED
-	int id = int(tip_global_state.names.size());
-	tip_global_state.names.push_back(name.c_str());
-	return id;
-#else
-	return -1;
-#endif
-}
-
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false){
 	tip_Snapshot snapshot;
 #ifndef TIP_DISABLED
 	snapshot.clocks_per_second = tip_global_state.clocks_per_second;
 	snapshot.process_id = tip_global_state.process_id;
-	snapshot.names = tip_global_state.names;
+	snapshot.names.init(256);
 
 	tip_lock_mutex(tip_global_state.thread_states_mutex);
 
@@ -319,34 +497,46 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 
 		tip_Thread_State* thread_state = tip_global_state.thread_states[i];
 		snapshot.thread_ids.push_back(thread_state->thread_id);
-		tip_lock_mutex(thread_state->event_buffers_mutex);
 
 		std::vector<tip_Event> thread_events;
 
-		for(tip_Event* event_buffer : thread_state->event_buffers){
-			int events_in_buffer = tip_event_buffer_size;
+		tip_Event_Buffer* event_buffer = thread_state->first_event_buffer;
 
-			if(event_buffer == thread_state->current_event_buffer)
-				events_in_buffer = int(thread_state->current_position_in_event_buffer);
+		while(event_buffer){
+			u8* data_pointer = event_buffer->position_of_first_event;
 
-			for(int j = 0; j < events_in_buffer; j++){
-				thread_events.push_back(event_buffer[j]);
+			while(data_pointer != event_buffer->current_position){
+				tip_Event event;
+				event.timestamp = *((u64*)data_pointer);
+				data_pointer += sizeof(event.timestamp);
+				event.type = *((tip_Event_Type*)data_pointer);
+				data_pointer += sizeof(event.type);
+				u64 name_length_including_terminator = *((u64*)data_pointer);
+				data_pointer += sizeof(name_length_including_terminator);
+				event.name_id = snapshot.names.intern_string((char*)data_pointer);
+				data_pointer += name_length_including_terminator;
+				thread_events.push_back(event);
 			}
 
-			if(erase_snapshot_data_from_internal_state)
-				free(event_buffer);
-		}
-
-		if(erase_snapshot_data_from_internal_state){
-			thread_state->event_buffers.clear();
-			thread_state->current_event_buffer = (tip_Event*) malloc(tip_event_buffer_size * sizeof(tip_Event));
-			thread_state->current_position_in_event_buffer = 0;
-			thread_state->event_buffers.push_back(thread_state->current_event_buffer);
+			if(erase_snapshot_data_from_internal_state){
+				if(thread_state->current_event_buffer == event_buffer){
+					event_buffer->position_of_first_event = data_pointer;
+					event_buffer = event_buffer->next_buffer;
+				}
+				else{
+					tip_Event_Buffer* next_buffer = event_buffer->next_buffer;
+					free(event_buffer->data);
+					free(event_buffer);
+					thread_state->first_event_buffer = next_buffer;
+					event_buffer = next_buffer;
+				}
+			}
+			else{
+				event_buffer = event_buffer->next_buffer;
+			}
 		}
 
 		snapshot.events.push_back(thread_events);
-
-		tip_unlock_mutex(thread_state->event_buffers_mutex);
 	}
 
 	tip_unlock_mutex(tip_global_state.thread_states_mutex);
@@ -375,7 +565,7 @@ s64 tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, std::string file_n
 					event_stack.push_back(event);
 				else{
 					tip_Event last_event_on_stack = event_stack[event_stack.size() - 1];
-					if(last_event_on_stack.type == tip_Event_Type::start && last_event_on_stack.name_index == event.name_index){
+					if(last_event_on_stack.type == tip_Event_Type::start && last_event_on_stack.name_id == event.name_id){
 						event_stack.pop_back();
 
 						if(first)
@@ -383,7 +573,7 @@ s64 tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, std::string file_n
 						else
 							fprintf(file, ",\n");
 
-						const char* name = snapshot.names[event.name_index].c_str();
+						const char* name = snapshot.names.get_string(event.name_id);
 						f64 timestamp = f64(last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
 						f64 duration = f64(event.timestamp - last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
 
@@ -404,7 +594,7 @@ s64 tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, std::string file_n
 			}
 			else{    //the only type of events left are the asynchronous ones. we just print these directly
 				f64 timestamp = f64(event.timestamp) / snapshot.clocks_per_second * 1000000.;
-				const char* name = snapshot.names[event.name_index].c_str();
+				const char* name = snapshot.names.get_string(event.name_id);
 				char type = '!';
 				if(event.type == tip_Event_Type::start_async)
 					type = 'b';
@@ -428,7 +618,7 @@ s64 tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, std::string file_n
 
 		for(tip_Event event : event_stack){ //print all start and stop events, that don't have a corresponding event they could form a duration event with
 			f64 timestamp = f64(event.timestamp) / snapshot.clocks_per_second * 1000000.;
-			const char* name = snapshot.names[event.name_index].c_str();
+			const char* name = snapshot.names.get_string(event.name_id);
 			char type = '!';
 			if(event.type == tip_Event_Type::start)
 				type = 'B';
