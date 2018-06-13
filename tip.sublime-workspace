@@ -4,6 +4,86 @@
 		"selected_items":
 		[
 			[
+				"tip_event",
+				"tip_event_buffer_size"
+			],
+			[
+				"init",
+				"initialized"
+			],
+			[
+				"tip_Even",
+				"tip_Event"
+			],
+			[
+				"events_",
+				"events_parsed"
+			],
+			[
+				"tip_Ev",
+				"tip_Event"
+			],
+			[
+				"first",
+				"first_event_buffer"
+			],
+			[
+				"event",
+				"event_name"
+			],
+			[
+				"tip_",
+				"tip_Event_Buffer"
+			],
+			[
+				"new_",
+				"new_buffer"
+			],
+			[
+				"tip_even",
+				"tip_event_buffer_size"
+			],
+			[
+				"tip_eve",
+				"tip_Event_Type"
+			],
+			[
+				"number",
+				"number_of_events"
+			],
+			[
+				"name",
+				"name_length_with_including_terminator"
+			],
+			[
+				"data",
+				"data_pointer"
+			],
+			[
+				"curre",
+				"current_position"
+			],
+			[
+				"curren",
+				"current_event_buffer"
+			],
+			[
+				"tip",
+				"tip_thread_state"
+			],
+			[
+				"strin",
+				"string.h\tstandard header (deprecated)"
+			],
+			[
+				"string",
+				"string_ids"
+			],
+			[
+				"inter",
+				"intern_string"
+			],
+			[
 				"name_",
 				"name_buffer"
 			],
@@ -14,10 +94,6 @@
 			[
 				"ini",
 				"initialized"
-			],
-			[
-				"name",
-				"name_indices"
 			],
 			[
 				"String",
@@ -32,10 +108,6 @@
 				"hash_index"
 			],
 			[
-				"string",
-				"string_length"
-			],
-			[
 				"star",
 				"start_async"
 			],
@@ -46,14 +118,6 @@
 			[
 				"tip_Event",
 				"tip_Event_Type"
-			],
-			[
-				"curren",
-				"current_position_in_event_buffer"
-			],
-			[
-				"event",
-				"event_buffer_size"
 			],
 			[
 				"current",
@@ -450,70 +514,6 @@
 			[
 				"PROFILE_MANUAL",
 				"PROFILE_MANUAL_START_VERBOSE"
-			],
-			[
-				"function_",
-				"function_name_size"
-			],
-			[
-				"function_n",
-				"function_name"
-			],
-			[
-				"PROFILE",
-				"PROFILE_FUNCTION_SHORT"
-			],
-			[
-				"add",
-				"address"
-			],
-			[
-				"event_",
-				"event_buffer_list"
-			],
-			[
-				"function_nam",
-				"function_name_size"
-			],
-			[
-				"name_buff",
-				"name_buffer"
-			],
-			[
-				"event_bu",
-				"event_buffer"
-			],
-			[
-				"buffer_li",
-				"buffer_list_mutex"
-			],
-			[
-				"function_name",
-				"function_name_length"
-			],
-			[
-				"name_b",
-				"name_buffer_size"
-			],
-			[
-				"event_buff",
-				"event_buffer_size"
-			],
-			[
-				"Profil",
-				"Profiler_Event"
-			],
-			[
-				"Profli",
-				"Profiler_Event"
-			],
-			[
-				"elem",
-				"element_index"
-			],
-			[
-				"current_",
-				"current_frame_drawn_interface_elements"
 			]
 		]
 	},
@@ -532,19 +532,9 @@
 			"file": "source/tip.h",
 			"settings":
 			{
-				"buffer_size": 12420,
+				"buffer_size": 17727,
 				"encoding": "UTF-8",
 				"line_ending": "Unix"
-			}
-		},
-		{
-			"file": "source/hash_table.h",
-			"settings":
-			{
-				"buffer_size": 6664,
-				"encoding": "UTF-8",
-				"line_ending": "Windows",
-				"name": "#include <stdio.h>"
 			}
 		},
 		{
@@ -561,7 +551,7 @@
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 1126,
+				"buffer_size": 1309,
 				"encoding": "UTF-8",
 				"line_ending": "Unix"
 			}
@@ -579,11 +569,11 @@
 		"selected_items":
 		[
 			[
-				"packa",
+				"install",
 				"Package Control: Install Package"
 			],
 			[
-				"install",
+				"packa",
 				"Package Control: Install Package"
 			],
 			[
@@ -635,6 +625,8 @@
 	],
 	"file_history":
 	[
+		"/B/tip/source/hash_table.cpp",
+		"/C/Workspaces/Geschnatter/app/src/main/java/die/huebschen/geschnatter/wifidirect/Connection.kt",
 		"/B/tip/test.json",
 		"/home/simon/workspaces/tip/test.json",
 		"/B/space/source/engine/win32_time.h",
@@ -760,9 +752,7 @@
 		"/C/Workspaces/noBullshitGUI/source/shaders/vertex_shader.glsl",
 		"/C/Workspaces/noBullshitGUI/compilelib.bat",
 		"/C/Workspaces/noBullshitGUI/source/threads.cpp",
-		"/C/Workspaces/ThePeer2PeerFileTransferProgrammThatIsFast/source/threads.cpp",
-		"/C/Workspaces/noBullshitGUI/source/glfw_test.cpp",
-		"/C/Workspaces/noBullshitGUI/source/interface elements/window.cpp"
+		"/C/Workspaces/ThePeer2PeerFileTransferProgrammThatIsFast/source/threads.cpp"
 	],
 	"find":
 	{
@@ -781,6 +771,38 @@
 		"case_sensitive": true,
 		"find_history":
 		[
+			"\")",
+			"peers",
+			"peers_scan",
+			"nullptr",
+			"name_id",
+			"data",
+			"ti",
+			"current_event_buffer",
+			"snapshot.events",
+			"thread_events",
+			"thread_state.",
+			"tip_Thread_State",
+			"tip_event_buffer_size",
+			"Event_Buffer",
+			"32",
+			"get_string",
+			"event_buffer.",
+			"tip_Event",
+			"name_length_with_including_terminator",
+			"tip_Snapshot",
+			"tip_Snap",
+			"tip_Event",
+			"buffer.",
+			"type",
+			"tip_Event_Type",
+			"timestamp",
+			"name_length_with_null_terminator",
+			"double",
+			"new_size",
+			"size",
+			"number_of_elements",
+			"capacity",
 			"new_size",
 			"collision",
 			"names",
@@ -856,7 +878,7 @@
 	"groups":
 	[
 		{
-			"selected": 2,
+			"selected": 3,
 			"sheets":
 			[
 				{
@@ -872,8 +894,8 @@
 						"selection":
 						[
 							[
-								0,
-								0
+								234,
+								234
 							]
 						],
 						"settings":
@@ -884,7 +906,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 1,
 					"type": "text"
 				},
 				{
@@ -893,15 +915,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 12420,
+						"buffer_size": 17727,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								2138,
-								2138
+								380,
+								380
 							]
 						],
 						"settings":
@@ -910,45 +932,14 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 1440.0,
+						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 1,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
 					"buffer": 2,
-					"file": "source/hash_table.h",
-					"semi_transient": false,
-					"settings":
-					{
-						"buffer_size": 6664,
-						"regions":
-						{
-						},
-						"selection":
-						[
-							[
-								1156,
-								1166
-							]
-						],
-						"settings":
-						{
-							"auto_name": "#include <stdio.h>",
-							"syntax": "Packages/C++/C++.sublime-syntax",
-							"tab_size": 4,
-							"translate_tabs_to_spaces": true
-						},
-						"translation.x": 0.0,
-						"translation.y": 780.0,
-						"zoom_level": 1.0
-					},
-					"stack_index": 0,
-					"type": "text"
-				},
-				{
-					"buffer": 3,
 					"semi_transient": false,
 					"settings":
 					{
@@ -1006,20 +997,20 @@
 					"type": "text"
 				},
 				{
-					"buffer": 4,
+					"buffer": 3,
 					"file": "source/test.cpp",
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 1126,
+						"buffer_size": 1309,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								264,
-								264
+								377,
+								377
 							]
 						],
 						"settings":
@@ -1029,6 +1020,35 @@
 						},
 						"translation.x": 0.0,
 						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "source/tip.h",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 17727,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								7766,
+								7766
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/C++/C++.sublime-syntax",
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 7065.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 3,
@@ -1266,7 +1286,7 @@
 	"show_open_files": false,
 	"show_tabs": true,
 	"side_bar_visible": true,
-	"side_bar_width": 374.0,
+	"side_bar_width": 257.0,
 	"status_bar_visible": true,
 	"template_settings":
 	{
