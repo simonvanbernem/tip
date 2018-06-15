@@ -250,6 +250,22 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop_async);
 #endif
 
+void tip_save_profile_event(uint64_t timestamp, char* name, tip_Event_Type type);
+uint64_t tip_get_timestamp();
+
+struct tip_Scope_Profiler{
+	char* name;
+
+	tip_Scope_Profiler(char* event_name){
+		tip_save_profile_event(tip_get_timestamp(), event_name, tip_Event_Type::start);
+		name = event_name;
+	}
+
+	~tip_Scope_Profiler(){
+		tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
+	}
+};
+
 #endif //END HEADER
 
 
@@ -443,20 +459,6 @@ void tip_save_profile_event(uint64_t timestamp, char* name, tip_Event_Type type)
 
 	buffer->current_position = data_pointer;
 }
-
-struct tip_Scope_Profiler{
-	char* name;
-
-	tip_Scope_Profiler(char* event_name){
-		tip_save_profile_event(tip_get_timestamp(), event_name, tip_Event_Type::start);
-		name = event_name;
-	}
-
-	~tip_Scope_Profiler(){
-		tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
-	}
-};
-
 
 void tip_thread_init(){
 #ifndef TIP_DISABLED
