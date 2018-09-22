@@ -1,9 +1,20 @@
 #define TIP_USE_RDTSC
 #define TIP_WINDOWS
 #define TIP_IMPLEMENTATION
+#define TIP_ASSERT(condition)
 #include "tip.h"
 
-#include <assert.h>
+int main(){
+	
+	tip_global_init();
+	tip_thread_init();
+	{
+		TIP_PROFILE_SCOPE("hallo");
+	}
+	tip_export_snapshot_to_chrome_json(tip_create_snapshot(true), "2.json");
+}
+
+/*
 #include <chrono>
 #include <thread>
 void sleep(int time){
@@ -55,3 +66,5 @@ int main(){
 
 	return 0;
 }
+
+*/

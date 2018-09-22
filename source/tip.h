@@ -85,7 +85,7 @@ void main(){
 #define tip_event_buffer_size 1024 * 1024
 #endif
 
-uint32_t tip_strlen(char* string);
+uint32_t tip_strlen(const char* string);
 bool tip_string_is_equal(char* string1, char* string2);
 
 template<typename T>
@@ -322,13 +322,13 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop_async);
 #endif
 
-void tip_save_profile_event(uint64_t timestamp, char* name, tip_Event_Type type);
+void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type);
 uint64_t tip_get_timestamp();
 
 struct tip_Scope_Profiler{
-	char* name;
+	const char* name;
 
-	tip_Scope_Profiler(char* event_name){
+	tip_Scope_Profiler(const char* event_name){
 		tip_save_profile_event(tip_get_timestamp(), event_name, tip_Event_Type::start);
 		name = event_name;
 	}
@@ -346,7 +346,7 @@ struct tip_Scope_Profiler{
 
 #ifdef TIP_IMPLEMENTATION
 
-uint32_t tip_strlen(char* string){
+uint32_t tip_strlen(const char* string){
 	uint32_t length = 0;
 	while(string[length++]){
 	}
@@ -366,6 +366,7 @@ bool tip_string_is_equal(char* string1, char* string2){
 
 
 #ifdef TIP_WINDOWS
+#define NOMINMAX
 #include "Windows.h"
 
 struct Mutex{
@@ -528,7 +529,7 @@ void tip_get_new_event_buffer(){
 	tip_thread_state.current_event_buffer = new_buffer;
 }
 
-void tip_save_profile_event(uint64_t timestamp, char* name, tip_Event_Type type){
+void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type){
 	uint64_t name_length_including_terminator = tip_strlen(name) + 1;
 	uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 	
