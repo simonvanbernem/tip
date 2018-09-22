@@ -6,7 +6,6 @@
 #include <assert.h>
 #include <chrono>
 #include <thread>
-#include <string>
 void sleep(int time){
 	std::this_thread::sleep_for(std::chrono::milliseconds(time));
 }
@@ -23,9 +22,8 @@ int main(){
 
 	printf("size of signed is %d\n", int(sizeof(signed)));
 
-	for(int i = 0; i < 101; i++){
-		char name[30];
-		sprintf(name, "adurchlauf nummer %d", i);
+	for(int i = 0; i < 11; i++){
+		char* name = "adurchlauf nummer";
 		TIP_PROFILE_SCOPE(name);
 		for(int j = 0; j < 9; j++){
 			TIP_PROFILE_SCOPE("bJahhhhooooo");
@@ -34,9 +32,8 @@ int main(){
 
 	tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "1.json");
 
-	for(int i = 0; i < 101; i++){
-		char name[30];
-		sprintf(name, "bdurchlauf nummer %d", i);
+	for(int i = 0; i < 11; i++){
+		char* name = "bdurchlauf nummer";
 		TIP_PROFILE_SCOPE(name);
 		for(int j = 0; j < 9; j++){
 			TIP_PROFILE_SCOPE("aJahhhhooooo");
@@ -45,9 +42,8 @@ int main(){
 
 	tip_export_snapshot_to_chrome_json(tip_create_snapshot(true), "2.json");
 
-	for(int i = 0; i < 101; i++){
-		char name[30];
-		sprintf(name, "cdurchlauf nummer %d", i);
+	for(int i = 0; i < 11; i++){
+		char* name = "cdurchlauf nummer";
 		TIP_PROFILE_SCOPE(name);
 		for(int j = 0; j < 9; j++){
 			TIP_PROFILE_SCOPE("cJahhhhooooo");

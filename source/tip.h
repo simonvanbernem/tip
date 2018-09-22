@@ -3,6 +3,77 @@
 // #define TIP_WINDOWS
 // #define TIP_DISABLED
 
+// use
+// #define TIP_IMPLEMENTATION
+// to generate the implementation.
+
+
+// before you can profile:
+// call tip_global_init() once for your entire program, before you call anything else in tip
+// call tip_thread_init() after tip_global_init() in each thread you want to profile before you call anything else in tip
+
+// profiling commands:
+// TIP_PROFILE_SCOPE(name)
+// TIP_PROFILE_START(name)
+// TIP_PROFILE_STOP(name)
+// TIP_PROFILE_ASYNC_START(name)
+// TIP_PROFILE_ASYNC_STOP(name)
+// where name is a string in quotes, e.g.: TIP_PROFILE_SCOPE("setup")
+
+// to export the profiling data in a format that can be openend in "chrome://tracing/" in your chrome browser, call:
+// tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "profiling_run.snapshot");
+// tip is modular, which means you can add your own exporters. tip_create_snapshot() accumulates all the internal state into a package that you can convert to your own format. for more information see the tip_Snapshot struct.
+// tip_export_snapshot_to_chrome_json is such a converter, which converts the snapshot to a json file, readable by "chrome://tracing/" in a chrome browser. Feel free to take a look.
+
+
+
+//single thread simple example:
+
+// #include <stdio.h>
+// void main(){
+//     tip_global_init();
+//     tip_thread_init();
+// 
+//     TIP_PROFILE_START("for loop");
+//     for(int i = 0; i < 1000; i++){
+//         TIP_PROFILE_SCOPE("iteration");
+//         printf("doing my work #%d", i);
+//     }
+//     TIP_PROFILE_STOP("for loop");
+// 
+//     tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "profiling_run.snapshot");
+// }
+
+
+/*
+#include <stdio.h>
+
+void new_thread_main(int thread_index){
+	tip_thread_init();
+	char buffer[20];
+	printf("thread %d started", thread_index);
+
+	for(int job_index = 0; job_index < 6; job_index++){
+		sprintf(buffer, "job #%d", thread_index);
+		TIP_PROFILE_START(buffer); //we can't use TIP_PROFILE_SCOPE here, since it would be executed before the sprintf
+
+		printf("doing job %d", job_index);
+
+		TIP_PROFILE_STOP(buffer);
+	}
+
+	sprintf(buffer, "thread #%d", thread_index);
+	TIP_PROFILE_ASYNC_STOP(buffer);
+}
+
+void main(){
+	for(int i = 0; i < 10; i++){
+		
+	}
+
+}
+
+*/
 #ifndef TIP_HEADER
 #define TIP_HEADER
 
@@ -10,11 +81,12 @@
 #include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
-#include <string.h>
-
 #ifndef tip_event_buffer_size
 #define tip_event_buffer_size 1024 * 1024
 #endif
+
+uint32_t tip_strlen(char* string);
+bool tip_string_is_equal(char* string1, char* string2);
 
 template<typename T>
 struct tip_Dynamic_Array{
@@ -119,12 +191,12 @@ struct tip_String_Interning_Hash_Table{
 		new_name_indices.init(new_size);
 		new_name_indices.insert(-1, new_size);
 
-		for(int i = 0; i < name_indices.size; i++){
+		for(uint64_t i = 0; i < name_indices.size; i++){
 			if(name_indices[i] == -1)
 				return;
 
 			char* string = name_buffer.buffer + name_indices[i];
-			uint64_t string_length = strlen(string);
+			uint64_t string_length = tip_strlen(string);
 			uint64_t hash_index = fvn_hash(string, string_length) % new_name_indices.size;
 
 			while(new_name_indices[hash_index] != -1) //linear probing, we know that this is a collision since every string is unique in the hashmap
@@ -141,22 +213,22 @@ struct tip_String_Interning_Hash_Table{
 		if(name_buffer.buffer == nullptr)
 			init(64);
 
-		uint64_t string_length = strlen(string);
+		uint64_t string_length = tip_strlen(string);
 		uint64_t hash_index = fvn_hash(string, string_length) % name_indices.size;
 
 
 		while(name_indices[hash_index] != -1){ //linear probing
 			char* found_string = name_buffer.buffer + name_indices[hash_index];
-			bool equal = strcmp(string, found_string) == 0;
+			bool equal = tip_string_is_equal(string, found_string);
 
 			if(equal)
-				return name_indices[hash_index];
+				return uint64_t(name_indices[hash_index]);
 			else
 				hash_index = (hash_index + 1) % name_indices.size;
 		}
 
 		uint64_t interned_string_id = name_buffer.size;
-		name_indices[hash_index] = interned_string_id;
+		name_indices[hash_index] = int64_t(interned_string_id);
 		name_buffer.insert(string, string_length + 1);
 		count++;
 
@@ -273,6 +345,24 @@ struct tip_Scope_Profiler{
 
 
 #ifdef TIP_IMPLEMENTATION
+
+uint32_t tip_strlen(char* string){
+	uint32_t length = 0;
+	while(string[length++]){
+	}
+	return length - 1;
+}
+
+bool tip_string_is_equal(char* string1, char* string2){
+	uint32_t index = 0;
+	while(string1[index] == string2[index]){
+		if(string1[index])
+			index++;
+		else
+			return true;
+	}
+	return false;
+}
 
 
 #ifdef TIP_WINDOWS
@@ -439,7 +529,7 @@ void tip_get_new_event_buffer(){
 }
 
 void tip_save_profile_event(uint64_t timestamp, char* name, tip_Event_Type type){
-	uint64_t name_length_including_terminator = strlen(name) + 1;
+	uint64_t name_length_including_terminator = tip_strlen(name) + 1;
 	uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 	
 	if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end)
@@ -584,7 +674,8 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
 
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
 #ifndef TIP_DISABLED
-	FILE* file = fopen(file_name, "w+");
+	FILE* file = nullptr;
+	fopen_s(&file, file_name, "w+");
 	fprintf(file, "{\"traceEvents\": [\n");
 
 	bool first = true;
