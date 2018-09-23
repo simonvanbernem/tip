@@ -3,6 +3,8 @@
 // #define TIP_WINDOWS
 // #define TIP_DISABLED
 
+// if you do not define TIP_WINDOWS, TIP will use the C++ <chrono> header for timing, which (apparently) pulls in some code that needs exceptions enabled to compile. So you may get the "enable -EHsc" error when you have them turned off!
+
 // use
 // #define TIP_IMPLEMENTATION
 // to generate the implementation.
@@ -530,6 +532,8 @@ void tip_get_new_event_buffer(){
 }
 
 void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type){
+	assert(tip_thread_state.initialized);
+	
 	uint64_t name_length_including_terminator = tip_strlen(name) + 1;
 	uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 	
@@ -673,6 +677,46 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
 	return snapshot;
 }
 
+
+void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* array){
+	array->clear();
+	for(int i = 0; string[i]; i++){
+		switch(string[i]){
+			case '\\':
+				array->insert('\\');
+				array->insert('\\');
+				break;
+			case '\n':
+				array->insert('\\');
+				array->insert('n');
+				break;
+			case '\t':
+				array->insert('\\');
+				array->insert('t');
+				break;
+			case '\"':
+				array->insert('\\');
+				array->insert('\"');
+				break;
+			case '\r':
+				array->insert('\\');
+				array->insert('\r');
+				break;
+			case '\b':
+				array->insert('\\');
+				array->insert('\b');
+				break;
+			case '\f':
+				array->insert('\\');
+				array->insert('\f');
+				break;
+			default:
+				array->insert(string[i]);
+		}
+	}
+	array->insert('\0');
+}
+
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
 #ifndef TIP_DISABLED
 	FILE* file = nullptr;
@@ -682,6 +726,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	bool first = true;
 
 	tip_Dynamic_Array<tip_Event> event_stack;
+	tip_Dynamic_Array<char> escaped_name_buffer;
 
 	for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
 		int32_t thread_id = snapshot.thread_ids[thread_index];
@@ -707,7 +752,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 						double timestamp = double(last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
 						double duration = double(event.timestamp - last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
 
-
+						tip_escape_string_for_json(name, &escaped_name_buffer);
+						
 						fprintf(file,"  {\"name\":\"%s\","
 										"\"cat\":\"PERF\","
 										"\"ph\":\"X\","
@@ -715,7 +761,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 										"\"tid\":%d,"
 										"\"id\":100,"
 										"\"ts\":%.16e,"
-										"\"dur\":%.16e}", name, snapshot.process_id, thread_id, timestamp, duration);
+										"\"dur\":%.16e}", escaped_name_buffer.buffer, snapshot.process_id, thread_id, timestamp, duration);
 					}
 					else{
 						event_stack.insert(event);
@@ -725,6 +771,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 			else{    //the only type of events left are the asynchronous ones. we just print these directly
 				double timestamp = double(event.timestamp) / snapshot.clocks_per_second * 1000000.;
 				const char* name = snapshot.names.get_string(event.name_id);
+				tip_escape_string_for_json(name, &escaped_name_buffer);
+
 				char type = '!';
 				if(event.type == tip_Event_Type::start_async)
 					type = 'b';
@@ -742,13 +790,14 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 								"\"pid\":%d,"
 								"\"tid\":%d,"
 								"\"id\":100,"
-								"\"ts\":%.16e}", name, type, snapshot.process_id, thread_id, timestamp);
+								"\"ts\":%.16e}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
 			}
 		}
 
 		for(tip_Event event : event_stack){ //print all start and stop events, that don't have a corresponding event they could form a duration event with
 			double timestamp = double(event.timestamp) / snapshot.clocks_per_second * 1000000.;
 			const char* name = snapshot.names.get_string(event.name_id);
+			tip_escape_string_for_json(name, &escaped_name_buffer);
 			char type = '!';
 			if(event.type == tip_Event_Type::start)
 				type = 'B';
@@ -766,12 +815,13 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 							"\"pid\":%d,"
 							"\"tid\":%d,"
 							"\"id\":100,"
-							"\"ts\":%.16e}", name, type, snapshot.process_id, thread_id, timestamp);
+							"\"ts\":%.16e}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
 		}
 
 		event_stack.clear();
 	}
 
+	escaped_name_buffer.destroy();
 	fprintf(file, "\n],\n\"displayTimeUnit\": \"ns\"\n}");
 	uint64_t size = uint64_t(ftell(file));
 	fclose(file);
