@@ -3,3 +3,4 @@ build/
 *.opendb
 *.suo
 *.json
+*.snapshot

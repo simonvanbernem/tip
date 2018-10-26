@@ -1,7 +1,6 @@
 //flags you can set:
 // #define TIP_USE_RDTSC
 // #define TIP_WINDOWS
-// #define TIP_DISABLED
 
 // if you do not define TIP_WINDOWS, TIP will use the C++ <chrono> header for timing, which (apparently) pulls in some code that needs exceptions enabled to compile. So you may get the "enable -EHsc" error when you have them turned off!
 
@@ -301,17 +300,10 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 	the function returns the size of the created file
 */
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
+int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* file_name);
+tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name);
 
 
-#ifdef TIP_DISABLED
-	#define TIP_PROFILE_SCOPE(name)
-
-	#define TIP_PROFILE_START(name)
-	#define TIP_PROFILE_STOP(name)
-
-	#define TIP_PROFILE_ASYNC_START(name)
-	#define TIP_PROFILE_ASYNC_STOP(name)
-#else
 
 	#define TIP_CONCAT_LINE_NUMBER(x, y) x ## y // and you also need this somehow. c++ is stupid
 	#define TIP_CONCAT_LINE_NUMBER2(x, y) TIP_CONCAT_LINE_NUMBER(x, y) // this just concats "profauto" and the line number
@@ -322,7 +314,6 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 
 	#define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::start_async);
 	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop_async);
-#endif
 
 void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type);
 uint64_t tip_get_timestamp();
@@ -339,6 +330,46 @@ struct tip_Scope_Profiler{
 		tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
 	}
 };
+
+template<typename T>
+char* tip_serialize_value(char* buffer, T value){
+	*((T*)buffer) = value;
+	return buffer + sizeof(T);
+}
+
+template<typename T>
+char* tip_unserialize_value(char* buffer, T* value){
+	*value = *((T*)buffer);
+	return buffer + sizeof(T);
+}
+
+template<typename T>
+uint64_t tip_get_serialized_value_size(T value){
+	((void)value);
+	return sizeof(T);
+}
+
+template<typename T>
+char* tip_unserialize_dynamic_array(char* buffer, tip_Dynamic_Array<T>* array){
+	uint64_t size;
+	buffer = tip_unserialize_value(buffer, &size);
+	array->init(size);
+	array->size = size;
+	memcpy(array->buffer, buffer, size * sizeof(T));
+	return buffer + sizeof(T) * size;
+}
+
+template<typename T>
+char* tip_serialize_dynamic_array(char* buffer, tip_Dynamic_Array<T> array){
+	buffer = tip_serialize_value(buffer, array.size);
+	memcpy(buffer, array.buffer, array.size * sizeof(T));
+	return buffer + sizeof(T) * array.size;
+}
+
+template<typename T>
+uint64_t tip_get_serialized_dynamic_array_size(tip_Dynamic_Array<T> array){
+	return sizeof(array.size) + array.size * sizeof(T);
+}
 
 #endif //END HEADER
 
@@ -556,7 +587,6 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type
 }
 
 void tip_thread_init(){
-#ifndef TIP_DISABLED
 	assert(tip_global_state.initialized);
 
 	if(tip_thread_state.initialized)
@@ -580,11 +610,9 @@ void tip_thread_init(){
 	tip_unlock_mutex(tip_global_state.thread_states_mutex);
 
 	tip_thread_state.initialized = true;
-#endif
 }
 
 double tip_global_init(){
-#ifndef TIP_DISABLED
 	if(tip_global_state.initialized)
 		return 1. / tip_global_state.clocks_per_second;
 
@@ -613,14 +641,10 @@ double tip_global_init(){
 	tip_global_state.initialized = true;
 	tip_global_state.thread_states_mutex = tip_create_mutex();
 	return 1. / tip_global_state.clocks_per_second;
-#else
-	return 0;
-#endif
 }
 
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
 	tip_Snapshot snapshot;
-#ifndef TIP_DISABLED
 	snapshot.clocks_per_second = tip_global_state.clocks_per_second;
 	snapshot.process_id = tip_global_state.process_id;
 	snapshot.names.init(256);
@@ -649,6 +673,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
 				event.name_id = snapshot.names.intern_string((char*)data_pointer);
 				data_pointer += name_length_including_terminator;
 				thread_events.insert(event);
+				snapshot.number_of_events++;
 			}
 
 			if(erase_snapshot_data_from_internal_state){
@@ -673,7 +698,6 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
 	}
 
 	tip_unlock_mutex(tip_global_state.thread_states_mutex);
-#endif
 	return snapshot;
 }
 
@@ -718,7 +742,6 @@ void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* arr
 }
 
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
-#ifndef TIP_DISABLED
 	FILE* file = nullptr;
 	fopen_s(&file, file_name, "w+");
 	fprintf(file, "{\"traceEvents\": [\n");
@@ -826,9 +849,101 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	uint64_t size = uint64_t(ftell(file));
 	fclose(file);
 	return size;
-#else
-	return -1;
-#endif
+}
+
+int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* file_name){
+	uint64_t file_size = 0;
+
+	file_size += tip_get_serialized_value_size(snapshot.clocks_per_second); 
+	file_size += tip_get_serialized_value_size(snapshot.process_id); 
+	file_size += tip_get_serialized_value_size(snapshot.number_of_events);
+
+	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_buffer);
+	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_indices); 
+	file_size += tip_get_serialized_value_size(snapshot.names.count); 
+
+	file_size += tip_get_serialized_dynamic_array_size(snapshot.thread_ids); 
+
+	for(int i = 0; i < snapshot.events.size; i++){
+		file_size += tip_get_serialized_dynamic_array_size(snapshot.events[i]); 
+	}
+
+
+	char* initial_buffer_position = (char*) malloc(file_size);
+	char* buffer = initial_buffer_position;
+
+
+	buffer = tip_serialize_value(buffer, snapshot.clocks_per_second); 
+	buffer = tip_serialize_value(buffer, snapshot.process_id); 
+	buffer = tip_serialize_value(buffer, snapshot.number_of_events); 
+
+	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_buffer);
+	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_indices); 
+	buffer = tip_serialize_value(buffer, snapshot.names.count); 
+
+	buffer = tip_serialize_dynamic_array(buffer, snapshot.thread_ids); 
+
+	for(int i = 0; i < snapshot.thread_ids.size; i++){
+		buffer = tip_serialize_dynamic_array(buffer, snapshot.events[i]); 
+	}
+
+
+	assert(snapshot.thread_ids.size == snapshot.events.size);
+	assert(buffer == initial_buffer_position + file_size);
+
+
+	FILE* file = nullptr;
+	fopen_s(&file, file_name, "wb");
+	fwrite(initial_buffer_position, file_size, 1, file);
+	fclose(file);
+	free(initial_buffer_position);
+
+	printf("out size is %llu\n", file_size);
+	return file_size;
+}
+
+tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name){
+	tip_Snapshot snapshot;
+
+	char* initial_buffer_position;
+	uint64_t file_size;
+
+	{
+		FILE* file;
+
+		fopen_s(&file, file_name, "rb");
+		fseek(file, 0, SEEK_END);
+		file_size = ftell(file); 
+		printf("in  size is %llu\n", file_size);
+		rewind(file);
+
+		initial_buffer_position = (char*)malloc(file_size);
+		fread(initial_buffer_position, file_size, 1, file);
+		fclose(file);
+	}
+
+	char* buffer = initial_buffer_position;
+
+	buffer = tip_unserialize_value(buffer, &snapshot.clocks_per_second); 
+	buffer = tip_unserialize_value(buffer, &snapshot.process_id); 
+	buffer = tip_unserialize_value(buffer, &snapshot.number_of_events); 
+
+	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_buffer);
+	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_indices); 
+	buffer = tip_unserialize_value(buffer, &snapshot.names.count); 
+
+	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.thread_ids); 
+
+	for(int i = 0; i < snapshot.thread_ids.size; i++){
+		snapshot.events.insert({});
+		buffer = tip_unserialize_dynamic_array(buffer, &snapshot.events[i]); 
+	}
+
+	assert(snapshot.thread_ids.size == snapshot.events.size);
+	assert(buffer == initial_buffer_position + file_size);
+	free(initial_buffer_position);
+
+	return snapshot;
 }
 
 #endif //TIP_IMPLEMENTATION
