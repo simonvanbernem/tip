@@ -48,7 +48,7 @@ int main(int argc, char* argv[]){
 			return -1;
 		}
 
-		auto snapshot = tip_import_compressed_binary_to_snapshot(argv[1]);
+		auto snapshot = tip_import_snapshot_from_compressed_binary(argv[1]);
 		int64_t size = tip_export_snapshot_to_chrome_json(snapshot, argv[2]);
 
 		printf("Converting was sucessfull. Output file is %s (", argv[2]);

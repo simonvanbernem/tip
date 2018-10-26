@@ -263,9 +263,7 @@ struct tip_String_Interning_Hash_Table{
 	}
 };
 
-bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs){
-	return (lhs.count == rhs.count) && (lhs.name_buffer == rhs.name_buffer) && (lhs.name_indices == rhs.name_indices);
-}
+bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs);
 
 
 enum class tip_Event_Type{
@@ -282,9 +280,7 @@ struct tip_Event{
 	tip_Event_Type type;
 };
 
-bool operator==(tip_Event& lhs, tip_Event& rhs){
-	return (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
-}
+bool operator==(tip_Event& lhs, tip_Event& rhs);
 
 struct tip_Snapshot{
 	double clocks_per_second;
@@ -296,9 +292,7 @@ struct tip_Snapshot{
 	tip_Dynamic_Array<tip_Dynamic_Array<tip_Event>> events; // the inner array contains the events of one thread.
 };
 
-bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs){
-	return (lhs.clocks_per_second == rhs.clocks_per_second) && (lhs.process_id == rhs.process_id) && (lhs.number_of_events == rhs.number_of_events) && (lhs.names == rhs.names) && (lhs.thread_ids == rhs.thread_ids) && (lhs.events == rhs.events);
-};
+bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
 
 void tip_free_snapshot(tip_Snapshot snapshot);
 
@@ -333,7 +327,7 @@ static const char* tip_compressed_binary_text_header = "This is the compressed b
 static const uint64_t tip_compressed_binary_version = 2;
 
 int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* file_name);
-tip_Snapshot tip_import_compressed_binary_to_snapshot(char* file_name);
+tip_Snapshot tip_import_snapshot_from_compressed_binary(char* file_name);
 
 
 
@@ -410,6 +404,30 @@ uint64_t tip_get_serialized_dynamic_array_size(tip_Dynamic_Array<T> array){
 
 
 #ifdef TIP_IMPLEMENTATION
+
+bool operator==(tip_Event& lhs, tip_Event& rhs){
+	bool a = (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
+	if (a)
+		return true;
+	else
+		return false;
+}
+
+bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs){
+	bool a = (lhs.count == rhs.count) && (lhs.name_buffer == rhs.name_buffer) && (lhs.name_indices == rhs.name_indices);
+	if (a)
+		return true;
+	else 
+		return false;
+}
+
+bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs){
+	bool a =  (lhs.clocks_per_second == rhs.clocks_per_second) && (lhs.process_id == rhs.process_id) && (lhs.number_of_events == rhs.number_of_events) && (lhs.names == rhs.names) && (lhs.thread_ids == rhs.thread_ids) && (lhs.events == rhs.events);
+	if (a)
+		return true;
+	else
+		return false;
+}
 
 uint32_t tip_strlen(const char* string){
 	uint32_t length = 0;
@@ -924,8 +942,8 @@ int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* fi
 	uint64_t number_of_diffable_events = 0;
 	uint64_t number_of_first_events = 0;
 	{
-		uint64_t number_of_names = snapshot.names.count;
-		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(number_of_names);
+		uint64_t highest_possible_name_id = snapshot.names.name_buffer.size;
+		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(highest_possible_name_id);
 
 		uint64_t highest_diff_between_two_timestamps = 0;
 
@@ -1018,7 +1036,7 @@ int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* fi
 	return file_size;
 }
 
-tip_Snapshot tip_import_compressed_binary_to_snapshot(char* file_name){
+tip_Snapshot tip_import_snapshot_from_compressed_binary(char* file_name){
 	tip_Snapshot snapshot;
 
 	char* initial_buffer_position;
