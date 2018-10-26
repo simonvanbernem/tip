@@ -302,8 +302,12 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 	the function returns the size of the created file
 */
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
-int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* file_name);
-tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name);
+
+static const char* tip_uncompressed_binary_text_header = "This is the uncompressed binary format v1 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_uncompressed_binary\" function in tip.\n";
+static const uint64_t tip_uncompressed_binary_version = 1;
+
+int64_t tip_export_snapshot_to_uncompressed_binary(tip_Snapshot snapshot, char* file_name);
+tip_Snapshot tip_import_uncompressed_binary_to_snapshot(char* file_name);
 
 
 
@@ -853,8 +857,11 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	return size;
 }
 
-int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* file_name){
+int64_t tip_export_snapshot_to_uncompressed_binary(tip_Snapshot snapshot, char* file_name){
 	uint64_t file_size = 0;
+
+	file_size += 200; //this is for the text header
+	file_size += tip_get_serialized_value_size(tip_uncompressed_binary_version);
 
 	file_size += tip_get_serialized_value_size(snapshot.clocks_per_second); 
 	file_size += tip_get_serialized_value_size(snapshot.process_id); 
@@ -874,6 +881,14 @@ int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* 
 	char* initial_buffer_position = (char*) malloc(file_size);
 	char* buffer = initial_buffer_position;
 
+	uint64_t text_header_size = tip_strlen(tip_uncompressed_binary_text_header);
+	memcpy(buffer, tip_uncompressed_binary_text_header, text_header_size);
+	buffer += text_header_size;
+
+	memset(buffer, 0, 200 - text_header_size);
+	buffer += 200 - text_header_size;
+
+	buffer = tip_serialize_value(buffer, tip_uncompressed_binary_version);
 
 	buffer = tip_serialize_value(buffer, snapshot.clocks_per_second); 
 	buffer = tip_serialize_value(buffer, snapshot.process_id); 
@@ -900,11 +915,10 @@ int64_t tip_export_snapshot_to_binary_uncompressed(tip_Snapshot snapshot, char* 
 	fclose(file);
 	free(initial_buffer_position);
 
-	printf("out size is %llu\n", file_size);
 	return file_size;
 }
 
-tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name){
+tip_Snapshot tip_import_uncompressed_binary_to_snapshot(char* file_name){
 	tip_Snapshot snapshot;
 
 	char* initial_buffer_position;
@@ -916,7 +930,6 @@ tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name){
 		fopen_s(&file, file_name, "rb");
 		fseek(file, 0, SEEK_END);
 		file_size = ftell(file); 
-		printf("in  size is %llu\n", file_size);
 		rewind(file);
 
 		initial_buffer_position = (char*)malloc(file_size);
@@ -925,6 +938,13 @@ tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name){
 	}
 
 	char* buffer = initial_buffer_position;
+
+	buffer += 200; //200 is the max size of the text header
+
+	uint64_t version;
+	buffer = tip_unserialize_value(buffer, &version);
+
+	assert(version == tip_uncompressed_binary_version);
 
 	buffer = tip_unserialize_value(buffer, &snapshot.clocks_per_second); 
 	buffer = tip_unserialize_value(buffer, &snapshot.process_id); 

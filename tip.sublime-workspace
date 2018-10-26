@@ -557,16 +557,7 @@
 			"file": "source/tip.h",
 			"settings":
 			{
-				"buffer_size": 27585,
-				"encoding": "UTF-8",
-				"line_ending": "Windows"
-			}
-		},
-		{
-			"file": "json2.snapshot",
-			"settings":
-			{
-				"buffer_size": 46086,
+				"buffer_size": 27821,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -585,7 +576,7 @@
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 996,
+				"buffer_size": 1028,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -667,6 +658,7 @@
 	],
 	"file_history":
 	[
+		"/B/tip/json2.snapshot",
 		"/B/tip/binary.snapshot",
 		"/B/tip/source/hash_table.cpp",
 		"/C/Workspaces/Geschnatter/app/src/main/java/die/huebschen/geschnatter/wifidirect/Connection.kt",
@@ -793,8 +785,7 @@
 		"/C/Workspaces/inits/initnbui.bat",
 		"/C/Workspaces/noBullshitGUI/source/shaders/fragment_shader.glsl",
 		"/C/Workspaces/noBullshitGUI/source/shaders/vertex_shader.glsl",
-		"/C/Workspaces/noBullshitGUI/compilelib.bat",
-		"/C/Workspaces/noBullshitGUI/source/threads.cpp"
+		"/C/Workspaces/noBullshitGUI/compilelib.bat"
 	],
 	"find":
 	{
@@ -813,6 +804,11 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"tip_export_snapshot_to_uncompressed_binary",
+			"tip_import_uncompressed_binary_to_snapshot",
+			"binary_uncompressed",
+			"events",
+			"snapshot",
 			"number_of_events",
 			"process_id",
 			"TIP_ASSERT",
@@ -935,12 +931,7 @@
 			"name_indices",
 			"count",
 			"id",
-			"strip_sequence",
-			"aligned_string",
-			"PROFILE_SCOPE",
-			"tip_Snap",
-			"init",
-			".15e"
+			"strip_sequence"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -959,7 +950,7 @@
 	"groups":
 	[
 		{
-			"selected": 5,
+			"selected": 4,
 			"sheets":
 			[
 				{
@@ -987,7 +978,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 6,
+					"stack_index": 5,
 					"type": "text"
 				},
 				{
@@ -1017,7 +1008,7 @@
 						"translation.y": 1067.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 5,
+					"stack_index": 4,
 					"type": "text"
 				},
 				{
@@ -1047,7 +1038,7 @@
 						"translation.y": 2017.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 4,
+					"stack_index": 3,
 					"type": "text"
 				},
 				{
@@ -1076,7 +1067,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 3,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
@@ -1085,15 +1076,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 27585,
+						"buffer_size": 27821,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								26723,
-								26723
+								26411,
+								26411
 							]
 						],
 						"settings":
@@ -1102,44 +1093,14 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 18381.0,
-						"zoom_level": 1.0
-					},
-					"stack_index": 1,
-					"type": "text"
-				},
-				{
-					"buffer": 5,
-					"file": "json2.snapshot",
-					"semi_transient": false,
-					"settings":
-					{
-						"buffer_size": 46086,
-						"regions":
-						{
-						},
-						"selection":
-						[
-							[
-								3126,
-								3126
-							]
-						],
-						"settings":
-						{
-							"syntax": "Packages/Text/Plain text.tmLanguage",
-							"tab_size": 2,
-							"translate_tabs_to_spaces": true
-						},
-						"translation.x": 0.0,
-						"translation.y": 0.0,
+						"translation.y": 18049.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 0,
 					"type": "text"
 				},
 				{
-					"buffer": 6,
+					"buffer": 5,
 					"semi_transient": false,
 					"settings":
 					{
@@ -1193,24 +1154,24 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 9,
+					"stack_index": 8,
 					"type": "text"
 				},
 				{
-					"buffer": 7,
+					"buffer": 6,
 					"file": "source/test.cpp",
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 996,
+						"buffer_size": 1028,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								447,
-								447
+								955,
+								955
 							]
 						],
 						"settings":
@@ -1222,11 +1183,11 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 1,
 					"type": "text"
 				},
 				{
-					"buffer": 8,
+					"buffer": 7,
 					"file": "3.json",
 					"semi_transient": false,
 					"settings":
@@ -1252,7 +1213,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 7,
+					"stack_index": 6,
 					"type": "text"
 				},
 				{
@@ -1261,7 +1222,7 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 27585,
+						"buffer_size": 27821,
 						"regions":
 						{
 						},
@@ -1278,10 +1239,10 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 409195.0,
+						"translation.y": 410135.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 8,
+					"stack_index": 7,
 					"type": "text"
 				}
 			]
