@@ -4,6 +4,50 @@
 		"selected_items":
 		[
 			[
+				"uint_",
+				"uint64_t"
+			],
+			[
+				"number_of_events",
+				"number_of_events_in_this_buffer"
+			],
+			[
+				"number_of_event",
+				"number_of_events_in_this_buffer"
+			],
+			[
+				"number_of_ev",
+				"number_of_event_buffers"
+			],
+			[
+				"tip_seri",
+				"tip_serialize_number_with_number_of_bytes"
+			],
+			[
+				"timestam",
+				"timestamp"
+			],
+			[
+				"timestamp",
+				"timestamp_size_in_bytes"
+			],
+			[
+				"name_in",
+				"name_index_size_in_bytes"
+			],
+			[
+				"high",
+				"highest_diff_between_two_timestamps"
+			],
+			[
+				"number",
+				"number_of_bytes"
+			],
+			[
+				"current",
+				"current_timestamp"
+			],
+			[
 				"uncom",
 				"uncompressed_binary_version"
 			],
@@ -84,10 +128,6 @@
 				"tip_Event_Type"
 			],
 			[
-				"number",
-				"number_of_events"
-			],
-			[
 				"name",
 				"name_length_with_including_terminator"
 			],
@@ -154,10 +194,6 @@
 			[
 				"tip_Event",
 				"tip_Event_Type"
-			],
-			[
-				"current",
-				"current_event_buffer"
 			],
 			[
 				"file",
@@ -478,42 +514,6 @@
 			[
 				"log_",
 				"log_type_names"
-			],
-			[
-				"win",
-				"Windows_Color"
-			],
-			[
-				"proc",
-				"process_id"
-			],
-			[
-				"write_",
-				"write_events_of_thread"
-			],
-			[
-				"duration",
-				"duration_size"
-			],
-			[
-				"times",
-				"timestamp_diff"
-			],
-			[
-				"events_of_",
-				"events_of_type"
-			],
-			[
-				"name_in",
-				"name_index"
-			],
-			[
-				"events",
-				"events_of_this_thread"
-			],
-			[
-				"seriali",
-				"serialized_state"
 			]
 		]
 	},
@@ -548,7 +548,7 @@
 			"file": "source/tip.h",
 			"settings":
 			{
-				"buffer_size": 28773,
+				"buffer_size": 33986,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -567,7 +567,7 @@
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 1028,
+				"buffer_size": 1024,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -795,6 +795,23 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"current_timestamp",
+			"fist_event",
+			"tip_unserialize_value",
+			"number_of_events_in_this_array",
+			"number_of_event_buffers",
+			"name_index_size_in_bytes",
+			"uncom",
+			"tip_import_uncompressed_binary_to_snapshot",
+			"tip_serialized_value_size",
+			"name_id",
+			"tip_serialize_number_with_number_of_bytes",
+			"0",
+			"tip_serialize_value",
+			"buffer =",
+			"name_index_size_in_bytes",
+			"int64_t",
+			"uncompressed_binary",
 			"string_header_size",
 			"tip_uncompressed_binary_text_header",
 			"uncompressed_binary_text_header",
@@ -905,24 +922,7 @@
 			"thread_state.",
 			"tip_Thread_State",
 			"tip_event_buffer_size",
-			"Event_Buffer",
-			"32",
-			"get_string",
-			"event_buffer.",
-			"tip_Event",
-			"name_length_with_including_terminator",
-			"tip_Snapshot",
-			"tip_Snap",
-			"tip_Event",
-			"buffer.",
-			"type",
-			"tip_Event_Type",
-			"timestamp",
-			"name_length_with_null_terminator",
-			"double",
-			"new_size",
-			"size",
-			"number_of_elements"
+			"Event_Buffer"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -1038,15 +1038,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 28773,
+						"buffer_size": 33986,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								0,
-								28773
+								8627,
+								8627
 							]
 						],
 						"settings":
@@ -1055,7 +1055,7 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 18621.0,
+						"translation.y": 5885.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 0,
@@ -1125,15 +1125,15 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 1028,
+						"buffer_size": 1024,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								955,
-								955
+								503,
+								503
 							]
 						],
 						"settings":
@@ -1184,7 +1184,7 @@
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 28773,
+						"buffer_size": 33986,
 						"regions":
 						{
 						},
@@ -1201,7 +1201,7 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 416275.0,
+						"translation.y": 418455.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 6,
