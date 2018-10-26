@@ -4,6 +4,38 @@
 		"selected_items":
 		[
 			[
+				"tip_ev",
+				"tip_Event"
+			],
+			[
+				"uint",
+				"uint64_t"
+			],
+			[
+				"name_buff",
+				"name_buffer_size"
+			],
+			[
+				"initial",
+				"initial_buffer_position"
+			],
+			[
+				"thread",
+				"thread_ids"
+			],
+			[
+				"clock",
+				"clocks_per_second"
+			],
+			[
+				"tip_even",
+				"tip_Event"
+			],
+			[
+				"buffer",
+				"buffer_position"
+			],
+			[
 				"tip_event",
 				"tip_event_buffer_size"
 			],
@@ -38,10 +70,6 @@
 			[
 				"new_",
 				"new_buffer"
-			],
-			[
-				"tip_even",
-				"tip_event_buffer_size"
 			],
 			[
 				"tip_eve",
@@ -432,10 +460,6 @@
 				"audio_buffer_memory"
 			],
 			[
-				"buffer",
-				"buffer_length_in_samples"
-			],
-			[
 				"audio",
 				"audio_buffer_size"
 			],
@@ -490,30 +514,6 @@
 			[
 				"time_dif",
 				"time_diff_size_counts"
-			],
-			[
-				"druation",
-				"duration_count"
-			],
-			[
-				"duration_",
-				"duration_size_sum"
-			],
-			[
-				"thread",
-				"thread_index_size"
-			],
-			[
-				"hnadle_",
-				"handle_window_messages"
-			],
-			[
-				"Prof",
-				"Profiling_Class"
-			],
-			[
-				"PROFILE_MANUAL",
-				"PROFILE_MANUAL_START_VERBOSE"
 			]
 		]
 	},
@@ -545,10 +545,28 @@
 			}
 		},
 		{
+			"file": "tip.sln",
+			"settings":
+			{
+				"buffer_size": 1063,
+				"encoding": "UTF-8 with BOM",
+				"line_ending": "Windows"
+			}
+		},
+		{
 			"file": "source/tip.h",
 			"settings":
 			{
-				"buffer_size": 22201,
+				"buffer_size": 27585,
+				"encoding": "UTF-8",
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"file": "json2.snapshot",
+			"settings":
+			{
+				"buffer_size": 46086,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -567,7 +585,7 @@
 			"file": "source/test.cpp",
 			"settings":
 			{
-				"buffer_size": 1358,
+				"buffer_size": 996,
 				"encoding": "UTF-8",
 				"line_ending": "Windows"
 			}
@@ -649,6 +667,7 @@
 	],
 	"file_history":
 	[
+		"/B/tip/binary.snapshot",
 		"/B/tip/source/hash_table.cpp",
 		"/C/Workspaces/Geschnatter/app/src/main/java/die/huebschen/geschnatter/wifidirect/Connection.kt",
 		"/B/tip/test.json",
@@ -775,8 +794,7 @@
 		"/C/Workspaces/noBullshitGUI/source/shaders/fragment_shader.glsl",
 		"/C/Workspaces/noBullshitGUI/source/shaders/vertex_shader.glsl",
 		"/C/Workspaces/noBullshitGUI/compilelib.bat",
-		"/C/Workspaces/noBullshitGUI/source/threads.cpp",
-		"/C/Workspaces/ThePeer2PeerFileTransferProgrammThatIsFast/source/threads.cpp"
+		"/C/Workspaces/noBullshitGUI/source/threads.cpp"
 	],
 	"find":
 	{
@@ -792,9 +810,66 @@
 	},
 	"find_state":
 	{
-		"case_sensitive": true,
+		"case_sensitive": false,
 		"find_history":
 		[
+			"number_of_events",
+			"process_id",
+			"TIP_ASSERT",
+			"snapshot",
+			"long",
+			"buffer",
+			"file_size",
+			"initial_buffer_position",
+			"buffer,",
+			"tip_serialize",
+			"tip_serialize_value",
+			"buffer =",
+			"thread_ids",
+			"tip_serialize_value",
+			"buffer",
+			"buffer =",
+			"buffer",
+			"tip_serialize_value",
+			"tip_serialize_dynamic_array",
+			"names_buffer_size",
+			"serialize",
+			"=",
+			"\nchar*",
+			"serialize_value",
+			"thread_ids",
+			"names.name_buffer",
+			"name_buffer",
+			"process_id",
+			"values",
+			"buffer",
+			"=",
+			"filelen",
+			"fileptr",
+			"snapshot.names.count",
+			"; buffer",
+			"sizeof(snapshot.clocks_per_second)",
+			"size",
+			"snapshot_names",
+			"tip_export_snapshot_to_binary_uncompressed",
+			"names",
+			"thread_ids",
+			"names",
+			"count",
+			"double",
+			"char",
+			"name_indices",
+			"clocks_per_second",
+			"double",
+			"clocks_per_second",
+			"double",
+			"clocks_per_second",
+			"double",
+			"size",
+			"buffer_position",
+			"size",
+			"names",
+			"size",
 			"short",
 			"64",
 			"long",
@@ -865,52 +940,7 @@
 			"PROFILE_SCOPE",
 			"tip_Snap",
 			"init",
-			".15e",
-			"id",
-			"event",
-			"last_event_on_stack",
-			"event_stack",
-			"end",
-			"while",
-			"Scope_Profiler",
-			"event_buffer_size",
-			"CONCAT_LINE_NUMBER",
-			"MAKRO_EXPAND",
-			"MAKRO_EXPAND2",
-			"TOKENPASTE",
-			"TOKENPASTE2",
-			"UNIQUE",
-			"main",
-			"current_posi",
-			"get_reliable_timestamp_frequency",
-			"get_reliable_timestamp",
-			"tip_thread_state",
-			"get_thread_id",
-			"thread_index",
-			"events_in_buffer",
-			"thread_state.",
-			"thread_state",
-			"tip_save_profile_event",
-			"save_profile_event",
-			"unlock_mutex",
-			"lock_mutex",
-			"get_timestamp",
-			";",
-			"serialized_state",
-			"type",
-			"serialized_state",
-			"start",
-			"start_async",
-			"QueryPerformanceCounter",
-			"thread_states_mutex",
-			"event_buffers_mutex",
-			"#ifdef PROFILER_ACTIVATED",
-			"PROFILER_ACTIVATED",
-			"TIP_PROFILER_USE_RDTSC",
-			"PROFILER_USE_RDTSC",
-			"PROFILER_ACTIVATED",
-			"TIP_DISABLED",
-			"timestamps"
+			".15e"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -957,7 +987,7 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 2,
+					"stack_index": 6,
 					"type": "text"
 				},
 				{
@@ -979,13 +1009,15 @@
 						],
 						"settings":
 						{
-							"syntax": "Packages/JavaScript/JSON.sublime-syntax"
+							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 1387.0,
+						"translation.y": 1067.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 3,
+					"stack_index": 5,
 					"type": "text"
 				},
 				{
@@ -1012,27 +1044,56 @@
 							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
-						"translation.y": 2337.0,
+						"translation.y": 2017.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 5,
+					"stack_index": 4,
 					"type": "text"
 				},
 				{
 					"buffer": 3,
-					"file": "source/tip.h",
-					"semi_transient": false,
+					"file": "tip.sln",
+					"semi_transient": true,
 					"settings":
 					{
-						"buffer_size": 22201,
+						"buffer_size": 1063,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								21648,
-								21648
+								688,
+								688
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Text/Plain text.tmLanguage",
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 3,
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "source/tip.h",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 27585,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								26723,
+								26723
 							]
 						],
 						"settings":
@@ -1041,14 +1102,44 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 14127.0,
+						"translation.y": 18381.0,
 						"zoom_level": 1.0
 					},
 					"stack_index": 1,
 					"type": "text"
 				},
 				{
-					"buffer": 4,
+					"buffer": 5,
+					"file": "json2.snapshot",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 46086,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								3126,
+								3126
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/Text/Plain text.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				},
+				{
+					"buffer": 6,
 					"semi_transient": false,
 					"settings":
 					{
@@ -1102,24 +1193,24 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 7,
+					"stack_index": 9,
 					"type": "text"
 				},
 				{
-					"buffer": 5,
+					"buffer": 7,
 					"file": "source/test.cpp",
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 1358,
+						"buffer_size": 996,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								173,
-								173
+								447,
+								447
 							]
 						],
 						"settings":
@@ -1131,11 +1222,11 @@
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 0,
+					"stack_index": 2,
 					"type": "text"
 				},
 				{
-					"buffer": 6,
+					"buffer": 8,
 					"file": "3.json",
 					"semi_transient": false,
 					"settings":
@@ -1153,30 +1244,32 @@
 						],
 						"settings":
 						{
-							"syntax": "Packages/JavaScript/JSON.sublime-syntax"
+							"syntax": "Packages/JavaScript/JSON.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
 						},
 						"translation.x": 0.0,
 						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 4,
+					"stack_index": 7,
 					"type": "text"
 				},
 				{
-					"buffer": 3,
+					"buffer": 4,
 					"file": "source/tip.h",
 					"semi_transient": false,
 					"settings":
 					{
-						"buffer_size": 22201,
+						"buffer_size": 27585,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								22201,
-								22201
+								0,
+								0
 							]
 						],
 						"settings":
@@ -1185,10 +1278,10 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 391895.0,
+						"translation.y": 409195.0,
 						"zoom_level": 1.0
 					},
-					"stack_index": 6,
+					"stack_index": 8,
 					"type": "text"
 				}
 			]

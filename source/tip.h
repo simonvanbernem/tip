@@ -274,6 +274,8 @@ struct tip_Snapshot{
 	tip_Dynamic_Array<tip_Dynamic_Array<tip_Event>> events; // the inner array contains the events of one thread.
 };
 
+void tip_free_snapshot(tip_Snapshot snapshot);
+
 /*
 	tip_global_init will initialize the global profiler state. It needs to be called only once, before any other calls to the tip API (this includes the profiling macros). If you are using rdtsc, this function will block for ca. 10ms to determine the speed of the rdtsc clock.
 
@@ -944,6 +946,17 @@ tip_Snapshot tip_import_binary_uncompressed_to_snapshot(char* file_name){
 	free(initial_buffer_position);
 
 	return snapshot;
+}
+
+
+void tip_free_snapshot(tip_Snapshot snapshot){
+	snapshot.names.name_buffer.destroy();
+	snapshot.names.name_indices.destroy();
+	snapshot.thread_ids.destroy();
+	for(int i = 0; i < snapshot.events.size; i++){
+		snapshot.events[i].destroy();
+	}
+	snapshot.events.destroy();
 }
 
 #endif //TIP_IMPLEMENTATION
