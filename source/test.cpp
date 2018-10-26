@@ -40,7 +40,9 @@ void main(){
 	auto snapshot = tip_create_snapshot(true);
 	tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
 	tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
-	tip_export_snapshot_to_chrome_json(tip_import_compressed_binary_to_snapshot("binary.snapshot"), "json2.snapshot");
+	auto snapshot2 = tip_import_compressed_binary_to_snapshot("binary.snapshot");
+
+	assert(snapshot == snapshot2);
 
 	tip_free_snapshot(snapshot);
 

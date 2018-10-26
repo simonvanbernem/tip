@@ -164,6 +164,20 @@ struct tip_Dynamic_Array{
 	}
 };
 
+template<typename T>
+bool operator==(tip_Dynamic_Array<T>& lhs, tip_Dynamic_Array<T>& rhs){
+	if(lhs.size != rhs.size)
+		return false;
+
+	for(uint64_t i = 0; i < lhs.size; i++){
+		if(lhs[i] == rhs[i])
+			continue;
+		return false;
+	}
+
+	return true;
+}
+
 struct tip_String_Interning_Hash_Table{
 	tip_Dynamic_Array<char> name_buffer;
 	tip_Dynamic_Array<int64_t> name_indices;
@@ -249,6 +263,10 @@ struct tip_String_Interning_Hash_Table{
 	}
 };
 
+bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs){
+	return (lhs.count == rhs.count) && (lhs.name_buffer == rhs.name_buffer) && (lhs.name_indices == rhs.name_indices);
+}
+
 
 enum class tip_Event_Type{
 	start = 0,
@@ -264,6 +282,10 @@ struct tip_Event{
 	tip_Event_Type type;
 };
 
+bool operator==(tip_Event& lhs, tip_Event& rhs){
+	return (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
+}
+
 struct tip_Snapshot{
 	double clocks_per_second;
 	uint32_t process_id;
@@ -272,6 +294,10 @@ struct tip_Snapshot{
 	tip_String_Interning_Hash_Table names;
 	tip_Dynamic_Array<uint32_t> thread_ids;
 	tip_Dynamic_Array<tip_Dynamic_Array<tip_Event>> events; // the inner array contains the events of one thread.
+};
+
+bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs){
+	return (lhs.clocks_per_second == rhs.clocks_per_second) && (lhs.process_id == rhs.process_id) && (lhs.number_of_events == rhs.number_of_events) && (lhs.names == rhs.names) && (lhs.thread_ids == rhs.thread_ids) && (lhs.events == rhs.events);
 };
 
 void tip_free_snapshot(tip_Snapshot snapshot);
