@@ -260,7 +260,7 @@ enum class tip_Event_Type{
 
 struct tip_Event{
 	uint64_t timestamp;
-	int64_t name_id;
+	int64_t name_id; //I think this cant be unsigned, because of the string interning hashtable, I don't know though, might be wrong on this.
 	tip_Event_Type type;
 };
 
@@ -303,11 +303,11 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 */
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
 
-static const char* tip_uncompressed_binary_text_header = "This is the uncompressed binary format v1 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_uncompressed_binary\" function in tip.\n";
-static const uint64_t tip_uncompressed_binary_version = 1;
+static const char* tip_compressed_binary_text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+static const uint64_t tip_compressed_binary_version = 2;
 
-int64_t tip_export_snapshot_to_uncompressed_binary(tip_Snapshot snapshot, char* file_name);
-tip_Snapshot tip_import_uncompressed_binary_to_snapshot(char* file_name);
+int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* file_name);
+tip_Snapshot tip_import_compressed_binary_to_snapshot(char* file_name);
 
 
 
@@ -857,53 +857,127 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	return size;
 }
 
-int64_t tip_export_snapshot_to_uncompressed_binary(tip_Snapshot snapshot, char* file_name){
+uint64_t tip_number_of_bytes_needed_to_represent_this_number(uint64_t number){
+	uint64_t number_of_bytes = 1;
+	while(number >= 1llu << (number_of_bytes * 8))
+		number_of_bytes++;
+	return number_of_bytes;
+}
+
+char* tip_serialize_number_with_number_of_bytes(char* buffer, uint64_t number, uint64_t bytes){
+	memcpy(buffer, &number, bytes);
+	return buffer += bytes;
+}
+
+char* tip_unserialize_number_with_number_of_bytes(char* buffer, uint64_t* number, uint64_t bytes){
+	memcpy(number, buffer, bytes);
+	return buffer += bytes;
+}
+
+int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* file_name){
+	uint64_t name_index_size_in_bytes = 0;
+	uint64_t timestamp_size_in_bytes = 0;
+
 	uint64_t file_size = 0;
 
 	file_size += 200; //this is for the text header
-	file_size += tip_get_serialized_value_size(tip_uncompressed_binary_version);
 
+	file_size += tip_get_serialized_value_size(tip_compressed_binary_version);
 	file_size += tip_get_serialized_value_size(snapshot.clocks_per_second); 
 	file_size += tip_get_serialized_value_size(snapshot.process_id); 
-	file_size += tip_get_serialized_value_size(snapshot.number_of_events);
+	file_size += tip_get_serialized_value_size(snapshot.number_of_events); 
+	file_size += tip_get_serialized_value_size(snapshot.names.count);
+	file_size += tip_get_serialized_value_size(name_index_size_in_bytes);
+	file_size += tip_get_serialized_value_size(timestamp_size_in_bytes);
 
 	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_buffer);
 	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_indices); 
-	file_size += tip_get_serialized_value_size(snapshot.names.count); 
 
 	file_size += tip_get_serialized_dynamic_array_size(snapshot.thread_ids); 
+	
+	uint64_t number_of_diffable_events = 0;
+	uint64_t number_of_first_events = 0;
+	{
+		uint64_t number_of_names = snapshot.names.count;
+		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(number_of_names);
 
-	for(int i = 0; i < snapshot.events.size; i++){
-		file_size += tip_get_serialized_dynamic_array_size(snapshot.events[i]); 
+		uint64_t highest_diff_between_two_timestamps = 0;
+
+		for(int i = 0; i < snapshot.events.size; i++){
+			if(snapshot.events[i].size == 0)
+				continue;
+
+			int64_t prev_timestamp = snapshot.events[i][0].timestamp;
+			number_of_first_events++;
+
+			for(int j = 1; j < snapshot.events[i].size; j++){
+				number_of_diffable_events++;
+				int64_t current_timestamp = snapshot.events[i][j].timestamp;
+				uint64_t diff = uint64_t(current_timestamp - prev_timestamp);
+				prev_timestamp = current_timestamp;
+				if(highest_diff_between_two_timestamps < diff)
+					highest_diff_between_two_timestamps = diff;
+			}
+		}
+
+		timestamp_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(highest_diff_between_two_timestamps);
 	}
+
+	//how many bytes we need to store all the sizes of all the arrays in the events buffer + the size of the outer buffer itsself
+	file_size += tip_get_serialized_value_size(snapshot.events.size) * (snapshot.events.size + 1);
+
+	//we cant compress the size of the timetamps of the first event by diffing, because we need a start point for diffing
+	file_size += (name_index_size_in_bytes + sizeof(tip_Event::timestamp) + sizeof(tip_Event_Type)) * number_of_first_events;
+	file_size += (name_index_size_in_bytes + timestamp_size_in_bytes      + sizeof(tip_Event_Type)) * number_of_diffable_events;
 
 
 	char* initial_buffer_position = (char*) malloc(file_size);
 	char* buffer = initial_buffer_position;
 
-	uint64_t text_header_size = tip_strlen(tip_uncompressed_binary_text_header);
-	memcpy(buffer, tip_uncompressed_binary_text_header, text_header_size);
+	uint64_t text_header_size = tip_strlen(tip_compressed_binary_text_header);
+	memcpy(buffer, tip_compressed_binary_text_header, text_header_size);
 	buffer += text_header_size;
 
+	//padding until we reach 200 bytes. we do this, so people reading this format can rely on the version number to be at byte 201
 	memset(buffer, 0, 200 - text_header_size);
 	buffer += 200 - text_header_size;
 
-	buffer = tip_serialize_value(buffer, tip_uncompressed_binary_version);
-
+	buffer = tip_serialize_value(buffer, tip_compressed_binary_version);
 	buffer = tip_serialize_value(buffer, snapshot.clocks_per_second); 
 	buffer = tip_serialize_value(buffer, snapshot.process_id); 
 	buffer = tip_serialize_value(buffer, snapshot.number_of_events); 
+	buffer = tip_serialize_value(buffer, snapshot.names.count);
+	buffer = tip_serialize_value(buffer, name_index_size_in_bytes);
+	buffer = tip_serialize_value(buffer, timestamp_size_in_bytes);
+
+	printf("name index size: %llu\ntimestamp size: %llu\n", name_index_size_in_bytes, timestamp_size_in_bytes);
 
 	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_buffer);
 	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_indices); 
-	buffer = tip_serialize_value(buffer, snapshot.names.count); 
-
 	buffer = tip_serialize_dynamic_array(buffer, snapshot.thread_ids); 
 
-	for(int i = 0; i < snapshot.thread_ids.size; i++){
-		buffer = tip_serialize_dynamic_array(buffer, snapshot.events[i]); 
-	}
+	buffer = tip_serialize_value(buffer, snapshot.events.size);
 
+	for(int i = 0; i < snapshot.thread_ids.size; i++){
+		buffer = tip_serialize_value(buffer, snapshot.events[i].size);
+		if(snapshot.events[i].size == 0)
+			continue;
+
+		buffer = tip_serialize_number_with_number_of_bytes(buffer, snapshot.events[i][0].timestamp        , sizeof(uint64_t)        );
+		buffer = tip_serialize_number_with_number_of_bytes(buffer, uint64_t(snapshot.events[i][0].name_id), name_index_size_in_bytes);
+		buffer = tip_serialize_value(buffer, snapshot.events[i][0].type);
+
+		uint64_t prev_timestamp = snapshot.events[i][0].timestamp;
+
+		for(int j = 1; j < snapshot.events[i].size; j++){
+			int64_t current_timestamp = snapshot.events[i][j].timestamp;
+			uint64_t diff = uint64_t(current_timestamp - prev_timestamp);
+			prev_timestamp = current_timestamp;
+			buffer = tip_serialize_number_with_number_of_bytes(buffer, diff, timestamp_size_in_bytes);
+			buffer = tip_serialize_number_with_number_of_bytes(buffer, uint64_t(snapshot.events[i][j].name_id), name_index_size_in_bytes);
+			buffer = tip_serialize_value(buffer, snapshot.events[i][j].type);
+		}
+	}
 
 	assert(snapshot.thread_ids.size == snapshot.events.size);
 	assert(buffer == initial_buffer_position + file_size);
@@ -918,7 +992,7 @@ int64_t tip_export_snapshot_to_uncompressed_binary(tip_Snapshot snapshot, char* 
 	return file_size;
 }
 
-tip_Snapshot tip_import_uncompressed_binary_to_snapshot(char* file_name){
+tip_Snapshot tip_import_compressed_binary_to_snapshot(char* file_name){
 	tip_Snapshot snapshot;
 
 	char* initial_buffer_position;
@@ -944,21 +1018,70 @@ tip_Snapshot tip_import_uncompressed_binary_to_snapshot(char* file_name){
 	uint64_t version;
 	buffer = tip_unserialize_value(buffer, &version);
 
-	assert(version == tip_uncompressed_binary_version);
+	assert(version == tip_compressed_binary_version);
+
+	uint64_t name_index_size_in_bytes = 0;
+	uint64_t timestamp_size_in_bytes = 0;
 
 	buffer = tip_unserialize_value(buffer, &snapshot.clocks_per_second); 
 	buffer = tip_unserialize_value(buffer, &snapshot.process_id); 
 	buffer = tip_unserialize_value(buffer, &snapshot.number_of_events); 
+	buffer = tip_unserialize_value(buffer, &snapshot.names.count);
+	buffer = tip_unserialize_value(buffer, &name_index_size_in_bytes);
+	buffer = tip_unserialize_value(buffer, &timestamp_size_in_bytes);
+
 
 	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_buffer);
 	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_indices); 
-	buffer = tip_unserialize_value(buffer, &snapshot.names.count); 
-
 	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.thread_ids); 
+
+
+	uint64_t number_of_event_buffers = 0;
+	buffer = tip_unserialize_value(buffer, &number_of_event_buffers);
+	snapshot.events.init(number_of_event_buffers);
 
 	for(int i = 0; i < snapshot.thread_ids.size; i++){
 		snapshot.events.insert({});
-		buffer = tip_unserialize_dynamic_array(buffer, &snapshot.events[i]); 
+
+		uint64_t number_of_events_in_this_buffer = 0;
+		buffer = tip_unserialize_value(buffer, &number_of_events_in_this_buffer);
+		if(number_of_events_in_this_buffer == 0)
+			continue;
+
+		snapshot.events[i].init(number_of_events_in_this_buffer);
+
+		tip_Event first_event;
+
+		buffer = tip_unserialize_number_with_number_of_bytes(buffer, &first_event.timestamp, sizeof(uint64_t));
+		{
+			uint64_t name_id = 0; 
+			buffer = tip_unserialize_number_with_number_of_bytes(buffer, &name_id, name_index_size_in_bytes);
+			first_event.name_id = int64_t(name_id);
+		}
+		buffer = tip_unserialize_value(buffer, &first_event.type);
+
+		snapshot.events[i].insert(first_event);
+
+		uint64_t prev_timestamp = first_event.timestamp;
+
+		for(int j = 1; j < number_of_events_in_this_buffer; j++){
+			tip_Event event;
+
+			uint64_t diff = 0;
+			buffer = tip_unserialize_number_with_number_of_bytes(buffer, &diff, timestamp_size_in_bytes);
+			event.timestamp = prev_timestamp + diff;
+			prev_timestamp = event.timestamp;
+
+			{
+				uint64_t name_id = 0;
+				buffer = tip_unserialize_number_with_number_of_bytes(buffer, &name_id, name_index_size_in_bytes);
+				event.name_id = int64_t(name_id);
+			}
+
+			buffer = tip_unserialize_value(buffer, &event.type);
+
+			snapshot.events[i].insert(event);
+		}
 	}
 
 	assert(snapshot.thread_ids.size == snapshot.events.size);
