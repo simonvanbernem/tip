@@ -6,10 +6,10 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "test", "build\test.exe", "{5158D7B1-8C5C-460F-A4F9-99FE2C8E78B9}"
 	ProjectSection(DebuggerProjectSystem) = preProject
 		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = B:\nbui\profiling results\tcb_converter.exe
+		Executable = B:\tip\build\test.exe
 		RemoteMachine = SIMON
-		StartingDirectory = B:\nbui\profiling results
-		Arguments = "queued rendering to the end of the frame.tcb2"  test2.json
+		StartingDirectory = B:\tip\build
+		Arguments = 
 		Environment = Default
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
 		UseLegacyDebugEngines = No
@@ -22,7 +22,7 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{5158D7B1-8C5C-460F-A4F9-99FE2C8E78B9}.Release|x64.ActiveCfg = Release|x64
+		{5158D7B1-8C5C-460F-A4F9-99FE2C8E78B9}.Release|x64.ActiveCfg = Release
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

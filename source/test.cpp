@@ -1,6 +1,7 @@
 #define TIP_USE_RDTSC
 #define TIP_WINDOWS
 #define TIP_IMPLEMENTATION
+#define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3
 #include "tip.h"
 
 
@@ -45,5 +46,4 @@ void main(){
 	assert(snapshot == snapshot2);
 
 	tip_free_snapshot(snapshot);
-
 }

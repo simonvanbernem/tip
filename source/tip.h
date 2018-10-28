@@ -1147,3 +1147,221 @@ void tip_free_snapshot(tip_Snapshot snapshot){
 }
 
 #endif //TIP_IMPLEMENTATION
+
+
+
+
+
+
+#if defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3) && ! defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER)
+#define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
+#include <vector>
+#include <algorithm>
+namespace tip_file_format_compressed_binary_v3{
+	void export_snapshot(char* file_name, tip_Snapshot snapshot);
+	tip_Snapshot import_snapshot(char* file_name);
+
+
+
+	template<typename T>
+	char* serialize(char* buffer, T value){
+		*((T*)buffer) = value;
+		return buffer + sizeof(T);
+	}
+
+	char* serialize_range(char* buffer, void* values, uint64_t size){
+		memcpy(buffer, values, size);
+		return buffer + size;
+	}
+
+}
+
+#endif
+
+#if defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3) && defined(TIP_IMPLEMENTATION)
+
+namespace tip_file_format_compressed_binary_v3{
+
+	//this writes number_of_bits_to_write bits from data to buffer. The write is offset by write_position_in_bits bits
+	//the return value is the first bit in buffer after the written data
+	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, char* data, unsigned number_of_bits_to_write){
+		uint64_t write_position_in_bytes = write_position_in_bits / 8;
+		write_position_in_bits = write_position_in_bits % 8;
+
+		uint64_t read_position_in_bytes = 0;
+		uint64_t read_position_in_bits = 0;
+
+		while(read_position_in_bits + read_position_in_bytes * 8 < number_of_bits_to_write){
+			char bit = ((1 << read_position_in_bits) & data[read_position_in_bytes]) >> read_position_in_bits;
+			buffer[write_position_in_bytes] = buffer[write_position_in_bytes] | (bit << write_position_in_bits);
+
+			read_position_in_bits = (read_position_in_bits + 1) % 8;
+			if(read_position_in_bits == 0)
+				read_position_in_bytes++;
+
+			write_position_in_bits = (write_position_in_bits + 1) % 8;
+			if(write_position_in_bits == 0)
+				write_position_in_bytes++;
+		}
+
+		return write_position_in_bits + write_position_in_bytes * 8;
+	}
+
+	uint64_t read_bits_from_buffer(char* buffer, uint64_t read_position_in_bits, char* data, unsigned number_of_bits_to_read){
+		uint64_t read_position_in_bytes = read_position_in_bits / 8;
+		read_position_in_bits = read_position_in_bits % 8;
+
+		uint64_t write_position_in_bytes = 0;
+		uint64_t write_position_in_bits = 0;
+
+		while(write_position_in_bits + write_position_in_bytes * 8 < number_of_bits_to_read){
+			char bit = ((1 << read_position_in_bits) & buffer[read_position_in_bytes]) >> read_position_in_bits;
+			data[write_position_in_bytes] = data[write_position_in_bytes] | (bit << write_position_in_bits);
+
+			read_position_in_bits = (read_position_in_bits + 1) % 8;
+			if(read_position_in_bits == 0)
+				read_position_in_bytes++;
+
+			write_position_in_bits = (write_position_in_bits + 1) % 8;
+			if(write_position_in_bits == 0)
+				write_position_in_bytes++;
+		}
+
+		return read_position_in_bits + read_position_in_bytes * 8;
+
+	}
+
+
+
+	struct Huffman_Encoder{
+		struct Node { 
+			//this is what you are here for: the code is in 
+			unsigned code;
+			unsigned code_length;
+
+			unsigned occurences; 
+			Node *left, *right; 
+		};
+
+		struct Heap_Comparison_Struct{ 
+			bool operator()(Node* lhs, Node* rhs) const{ 
+				return lhs > rhs; 
+			}
+		};
+
+		Node nodes[256];
+
+		void setup(){
+			for(int i = 0; i < 256; i++){
+				Node* node = &nodes[i];
+				node->occurences = 0;
+				node->left = nullptr;
+				node->right = nullptr;
+			}
+		}
+
+		//https://stackoverflow.com/questions/759707/efficient-way-of-storing-huffman-tree
+
+
+		void count_value(void* memory){
+			nodes[*((char*)memory)].occurences++;
+		}
+
+		void assign_codes_to_values(Node* current_node, unsigned code, unsigned code_length){
+			if(!(current_node->left || current_node->right)){
+				current_node->code = code;
+				current_node->code_length = code_length;
+				return;
+			}
+
+			unsigned left_code  = (0 << code_length) | code; //I know that this line is useless, but it makes clearer what happens here
+			unsigned right_code = (1 << code_length) | code;
+
+			assign_codes_to_values(current_node->left , left_code , code_length + 1);
+			assign_codes_to_values(current_node->right, right_code, code_length + 1);
+		}
+
+		void create_encoder_data(){
+			std::vector<Node*> internal_nodes;
+			std::vector<Node*> heap;
+			for(int i = 0; i < 256; i++){
+				heap.push_back(&nodes[i]);
+			}
+			std::make_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
+
+
+			Node* root_node_after_loop = nullptr;
+			while(!heap.empty()){
+				std::pop_heap(heap.begin(), heap.end());
+				auto smallest = heap.back();
+				heap.pop_back();
+
+				std::pop_heap(heap.begin(), heap.end());
+				auto second_smallest = heap.back();
+				heap.pop_back();
+
+				Node* new_internal_node = new Node();
+				new_internal_node->occurences = smallest->occurences + second_smallest->occurences;
+				new_internal_node->left = smallest;
+				new_internal_node->right = second_smallest;
+
+				internal_nodes.push_back(new_internal_node);
+
+				root_node_after_loop = new_internal_node;
+
+				heap.push_back(new_internal_node);
+				std::push_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
+			}
+
+			assign_codes_to_values(root_node_after_loop, 0, 0);
+
+			for(auto internal_node : internal_nodes){
+				delete internal_node;
+			}
+		}
+
+		void encode_value(char value, unsigned* code, unsigned* code_length_in_bits){
+			*code = nodes[value].code;
+			*code_length_in_bits = nodes[value].code_length;
+		}
+
+		void serialize_huffman_table(){
+
+		}
+
+		void export_snaphsot(char* file_name, tip_Snapshot snapshot){
+				auto buffer_size = 0;//get_conservative_size_estimate_for_serialized_snapshot(snapshot);
+				char* buffer = (char*)malloc(buffer_size);
+				char* buffer_initial_position = buffer;
+
+
+				const char* text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+
+				const uint64_t text_header_size = tip_strlen(text_header);
+				const uint64_t version = 2;
+
+				snapshot.number_of_events = 0;
+				file_name = nullptr;
+				buffer_initial_position = nullptr;
+				//ansatz für harte kompression:
+				//für die namen: 
+				//für den character buffer eine hoffman tabelle über die bytes laufen lassen 
+				//alle namen durchnummerieren
+				//die positionen der urpsprünglichen refenrenzen in name_indices speichern (damit kann man die usprüngliche string-interning-table exakt reproduzieren)
+				
+				//für die events:
+				//den event type in 2 bits speichern
+				//für folgende timestamps immer nur den diff zum vorherigen speichern
+				//jedes diff analysieren wieviel bit es braucht.
+				//mehrere vordefinierte bitlängen für diffs speichern. z.b.: 0 = 6bit, 1 = 8bit, 2 = 10bit, 3 = 12bit, 4 = 18bit, 5 = 26bit, 6 = 32bit, 7 = 64bit
+				//dann die bitlänge immer in 3 bit vor dem eigentlichen diff speichern
+				//dahinter den diff speichern
+				//dahinter den namens-index speichern
+				//für nicht-asynchron schließende events kann man den namens-index auslassen
+
+		}
+
+	};
+}
+
+#endif
