@@ -1233,6 +1233,14 @@ namespace tip_file_format_compressed_binary_v3{
 
 
 
+	//usage:
+	//call setup once before you use the encoder
+	//call count_value on every byte of the data you want to encode
+	//call create_encoder_data
+	//you can now call encode_value to get the code and length of that code in bits for each byte of data you want to encode
+	//the decoder needs the huffman table, to be able to decode the data. So you need to store it along with your encoded data:
+	//call get_conservative_size_estimate_when_serialized to get a conservativethe size you need to reserve for the serialized table itsself
+	//call serialize_table to serialize the table
 	struct Huffman_Encoder{
 		struct Node { 
 			//this is what you are here for: the code is in 
@@ -1241,12 +1249,6 @@ namespace tip_file_format_compressed_binary_v3{
 
 			unsigned occurences; 
 			Node *left, *right; 
-		};
-
-		struct Heap_Comparison_Struct{ 
-			bool operator()(Node* lhs, Node* rhs) const{ 
-				return lhs > rhs; 
-			}
 		};
 
 		Node nodes[256];
@@ -1267,6 +1269,12 @@ namespace tip_file_format_compressed_binary_v3{
 			nodes[*((char*)memory)].occurences++;
 		}
 
+		struct Heap_Comparison_Struct{ 
+			bool operator()(Node* lhs, Node* rhs) const{ 
+				return lhs > rhs; 
+			}
+		};
+
 		void assign_codes_to_values(Node* current_node, unsigned code, unsigned code_length){
 			if(!(current_node->left || current_node->right)){
 				current_node->code = code;
@@ -1281,22 +1289,34 @@ namespace tip_file_format_compressed_binary_v3{
 			assign_codes_to_values(current_node->right, right_code, code_length + 1);
 		}
 
+		std::vector<Node*> internal_nodes;
+		Node* root_node = nullptr;
+
 		void create_encoder_data(){
-			std::vector<Node*> internal_nodes;
 			std::vector<Node*> heap;
 			for(int i = 0; i < 256; i++){
 				heap.push_back(&nodes[i]);
 			}
 			std::make_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 
+			//we get rid of all nodes for values that didn't appear in the data to compress. That way the serialized tree will be smaller
+			while(true){
+				auto smallest = heap.back();
+				if(smallest->occurences != 0)
+					break;
 
-			Node* root_node_after_loop = nullptr;
+				std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
+				heap.pop_back();
+			}
+
+			assert(heap.size() > 1);
+
 			while(!heap.empty()){
-				std::pop_heap(heap.begin(), heap.end());
+				std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 				auto smallest = heap.back();
 				heap.pop_back();
 
-				std::pop_heap(heap.begin(), heap.end());
+				std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 				auto second_smallest = heap.back();
 				heap.pop_back();
 
@@ -1307,17 +1327,13 @@ namespace tip_file_format_compressed_binary_v3{
 
 				internal_nodes.push_back(new_internal_node);
 
-				root_node_after_loop = new_internal_node;
+				root_node = new_internal_node;
 
 				heap.push_back(new_internal_node);
 				std::push_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 			}
 
 			assign_codes_to_values(root_node_after_loop, 0, 0);
-
-			for(auto internal_node : internal_nodes){
-				delete internal_node;
-			}
 		}
 
 		void encode_value(char value, unsigned* code, unsigned* code_length_in_bits){
@@ -1325,43 +1341,67 @@ namespace tip_file_format_compressed_binary_v3{
 			*code_length_in_bits = nodes[value].code_length;
 		}
 
-		void serialize_huffman_table(){
+		uint64_t get_serialized_size_for_subtree(Node* node){
+			if(!(node->left || node->right))
+				return 1 + 8; //1 bit for saving that this is a leaf node, 8 bit for storing the original data value
+			else
+				return 1 + get_size_for_subtree(node->left) + get_size_for_subtree(node->right);  
+		}
+
+		uint64_t get_table_size_when_serialized(){
+			return get_size_for_subtree(root_node);
+		}
+
+		uint64_t serialize_subtree(char* buffer, uint64_t write_position_in_bits, Node* node){
 
 		}
 
-		void export_snaphsot(char* file_name, tip_Snapshot snapshot){
-				auto buffer_size = 0;//get_conservative_size_estimate_for_serialized_snapshot(snapshot);
-				char* buffer = (char*)malloc(buffer_size);
-				char* buffer_initial_position = buffer;
+		uint64_t serialize_table(char* buffer, uint64_t write_position_in_bits){
 
+	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, char* data, unsigned number_of_bits_to_write){
 
-				const char* text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+		}
 
-				const uint64_t text_header_size = tip_strlen(text_header);
-				const uint64_t version = 2;
-
-				snapshot.number_of_events = 0;
-				file_name = nullptr;
-				buffer_initial_position = nullptr;
-				//ansatz für harte kompression:
-				//für die namen: 
-				//für den character buffer eine hoffman tabelle über die bytes laufen lassen 
-				//alle namen durchnummerieren
-				//die positionen der urpsprünglichen refenrenzen in name_indices speichern (damit kann man die usprüngliche string-interning-table exakt reproduzieren)
-				
-				//für die events:
-				//den event type in 2 bits speichern
-				//für folgende timestamps immer nur den diff zum vorherigen speichern
-				//jedes diff analysieren wieviel bit es braucht.
-				//mehrere vordefinierte bitlängen für diffs speichern. z.b.: 0 = 6bit, 1 = 8bit, 2 = 10bit, 3 = 12bit, 4 = 18bit, 5 = 26bit, 6 = 32bit, 7 = 64bit
-				//dann die bitlänge immer in 3 bit vor dem eigentlichen diff speichern
-				//dahinter den diff speichern
-				//dahinter den namens-index speichern
-				//für nicht-asynchron schließende events kann man den namens-index auslassen
-
+		void destroy(){
+			for(auto internal_node : internal_nodes){
+				delete internal_node;
+			}
 		}
 
 	};
+
+	void export_snaphsot(char* file_name, tip_Snapshot snapshot){
+			auto buffer_size = 0;//get_conservative_size_estimate_for_serialized_snapshot(snapshot);
+			char* buffer = (char*)malloc(buffer_size);
+			char* buffer_initial_position = buffer;
+
+
+			const char* text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+
+			const uint64_t text_header_size = tip_strlen(text_header);
+			const uint64_t version = 2;
+
+			snapshot.number_of_events = 0;
+			file_name = nullptr;
+			buffer_initial_position = nullptr;
+			//ansatz für harte kompression:
+			//für die namen: 
+			//für den character buffer eine hoffman tabelle über die bytes laufen lassen 
+			//alle namen durchnummerieren
+			//die positionen der urpsprünglichen refenrenzen in name_indices speichern (damit kann man die usprüngliche string-interning-table exakt reproduzieren)
+			
+			//für die events:
+			//den event type in 2 bits speichern
+			//für folgende timestamps immer nur den diff zum vorherigen speichern
+			//jedes diff analysieren wieviel bit es braucht.
+			//mehrere vordefinierte bitlängen für diffs speichern. z.b.: 0 = 6bit, 1 = 8bit, 2 = 10bit, 3 = 12bit, 4 = 18bit, 5 = 26bit, 6 = 32bit, 7 = 64bit
+			//dann die bitlänge immer in 3 bit vor dem eigentlichen diff speichern
+			//dahinter den diff speichern
+			//dahinter den namens-index speichern
+			//für nicht-asynchron schließende events kann man den namens-index auslassen
+
+	}
+
 }
 
 #endif
