@@ -39,12 +39,13 @@ void main(){
 	profile_stuff();
 
 	auto snapshot = tip_create_snapshot(true);
-	tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
-	tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
-	auto snapshot2 = tip_import_snapshot_from_compressed_binary("binary.snapshot");
+	//tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
+	//tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
+	//auto snapshot2 = tip_import_snapshot_from_compressed_binary("binary.snapshot");
 	auto siez = tip_file_format_compressed_binary_v3::export_snaphsot("binary.ssss", snapshot);
-	printf("v3 snapshot is %llu bytes big", siez);
+	printf("v3 snapshot is %llu bytes big\n", siez);
 
+	/*
 	assert(snapshot == snapshot2);
 
 	tip_free_snapshot(snapshot);
@@ -65,5 +66,6 @@ void main(){
 	for(unsigned i = 0; i < count; i++){
 		bit_position = encoder.serialize_encoded_value(encoded, bit_position, data + i);
 	}
+	*/
 
 }

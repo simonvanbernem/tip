@@ -908,6 +908,14 @@ uint64_t tip_number_of_bytes_needed_to_represent_number(uint64_t number){
 	return number_of_bytes;
 }
 
+uint64_t tip_number_bits_needed_ro_represent_number(uint64_t number) {
+	uint64_t number_of_bits = 1;
+	while (number >= 1llu << number_of_bits)
+		number_of_bits++;
+	return number_of_bits;
+
+}
+
 char* tip_serialize_number_with_number_of_bytes(char* buffer, uint64_t number, uint64_t bytes){
 	memcpy(buffer, &number, bytes);
 	return buffer += bytes;
@@ -1440,7 +1448,7 @@ namespace tip_file_format_compressed_binary_v3{
 
 		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.names.count);
 		
-		uint64_t event_type_size = tip_number_of_bytes_needed_to_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
+		uint64_t event_type_size = tip_number_bits_needed_ro_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
 		printf("event type size is %llu bit\n", event_type_size);
 
 		uint64_t name_count = 0;
@@ -1457,14 +1465,14 @@ namespace tip_file_format_compressed_binary_v3{
 			}
 		}
 
-		uint64_t converted_name_index_size = tip_number_of_bytes_needed_to_represent_number(name_count);
+		uint64_t converted_name_index_size = tip_number_bits_needed_ro_represent_number(name_count);
 		printf("converted name index size is %llu bit\n", converted_name_index_size);
 
 
 		//we don't necessairily store the diff in the size that would be perfect for it, because that would mean we would need 6 bits to just communcate the bit-length of the diff (2^6 = 64). Instead we have these 8 predefined sizes that a diff can have. The smallest one that it fits is picked. We the just transmit the index in this array (3 bits) as length information
 		uint64_t diff_possible_bit_sizes[] = {7, 8, 9, 10, 12, 16, 22, 64}; //you can tweak this to find out what's best for you
-		uint64_t number_of_diff_sizes = sizeof(diff_possible_bit_sizes) / sizeof(uint64_t);
-		uint64_t diff_size_size = tip_number_of_bytes_needed_to_represent_number(number_of_diff_sizes);
+		uint64_t number_of_diff_sizes = sizeof(diff_possible_bit_sizes) / sizeof(uint64_t) - 1;
+		uint64_t diff_size_size = tip_number_bits_needed_ro_represent_number(number_of_diff_sizes);
 		printf("diff size size is %llu bit\n", diff_size_size);
 		assert(diff_size_size == 3);
 
@@ -1479,7 +1487,7 @@ namespace tip_file_format_compressed_binary_v3{
 			for(uint64_t j = 0; j < snapshot.events[i].size; j++){
 				tip_Event event = snapshot.events[i][j];
 				uint64_t diff = event.timestamp - prev_timestamp;
-				uint64_t diff_bit_size = tip_number_of_bytes_needed_to_represent_number(diff);
+				uint64_t diff_bit_size = tip_number_bits_needed_ro_represent_number(diff);
 
 				for(uint64_t k = 0; k < number_of_diff_sizes; k++){
 					if(diff_bit_size <= diff_possible_bit_sizes[k]){
