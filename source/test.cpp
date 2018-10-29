@@ -42,8 +42,28 @@ void main(){
 	tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
 	tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
 	auto snapshot2 = tip_import_snapshot_from_compressed_binary("binary.snapshot");
+	auto siez = tip_file_format_compressed_binary_v3::export_snaphsot("binary.ssss", snapshot);
+	printf("v3 snapshot is %llu bytes big", siez);
 
 	assert(snapshot == snapshot2);
 
 	tip_free_snapshot(snapshot);
+
+	char data[] = {1,2,3,4,1,5,1,6,7,2,3,1,1,8,1,9,8,6,7,1,2,3,1,5,1,1};
+	char encoded[30];
+	unsigned count = 20;
+	tip_file_format_compressed_binary_v3::Huffman_Encoder encoder = {};
+
+	for(unsigned i = 0; i < count; i++){
+		encoder.count_value(data + i);
+	}
+
+	encoder.create_encoder_data();
+
+	uint64_t bit_position = 0;
+
+	for(unsigned i = 0; i < count; i++){
+		bit_position = encoder.serialize_encoded_value(encoded, bit_position, data + i);
+	}
+
 }

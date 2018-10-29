@@ -901,7 +901,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	return size;
 }
 
-uint64_t tip_number_of_bytes_needed_to_represent_this_number(uint64_t number){
+uint64_t tip_number_of_bytes_needed_to_represent_number(uint64_t number){
 	uint64_t number_of_bytes = 1;
 	while(number >= 1llu << (number_of_bytes * 8))
 		number_of_bytes++;
@@ -943,7 +943,7 @@ int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* fi
 	uint64_t number_of_first_events = 0;
 	{
 		uint64_t highest_possible_name_id = snapshot.names.name_buffer.size;
-		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(highest_possible_name_id);
+		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_number(highest_possible_name_id);
 
 		uint64_t highest_diff_between_two_timestamps = 0;
 
@@ -964,7 +964,7 @@ int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* fi
 			}
 		}
 
-		timestamp_size_in_bytes = tip_number_of_bytes_needed_to_represent_this_number(highest_diff_between_two_timestamps);
+		timestamp_size_in_bytes = tip_number_of_bytes_needed_to_represent_number(highest_diff_between_two_timestamps);
 	}
 
 	//how many bytes we need to store all the sizes of all the arrays in the events buffer + the size of the outer buffer itsself
@@ -1163,15 +1163,12 @@ namespace tip_file_format_compressed_binary_v3{
 
 
 
-	template<typename T>
-	char* serialize(char* buffer, T value){
-		*((T*)buffer) = value;
-		return buffer + sizeof(T);
-	}
+	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bits_to_write);
+	uint64_t write_bytes_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bytes_to_write);
 
-	char* serialize_range(char* buffer, void* values, uint64_t size){
-		memcpy(buffer, values, size);
-		return buffer + size;
+	template<typename T>
+	uint64_t serialize_value(char* buffer, uint64_t write_position_in_bits, T value){
+		return write_bits_into_buffer(buffer, write_position_in_bits, &value, sizeof(T));
 	}
 
 }
@@ -1184,7 +1181,7 @@ namespace tip_file_format_compressed_binary_v3{
 
 	//this writes number_of_bits_to_write bits from data to buffer. The write is offset by write_position_in_bits bits
 	//the return value is the first bit in buffer after the written data
-	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, char* data, unsigned number_of_bits_to_write){
+	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bits_to_write){
 		uint64_t write_position_in_bytes = write_position_in_bits / 8;
 		write_position_in_bits = write_position_in_bits % 8;
 
@@ -1192,8 +1189,12 @@ namespace tip_file_format_compressed_binary_v3{
 		uint64_t read_position_in_bits = 0;
 
 		while(read_position_in_bits + read_position_in_bytes * 8 < number_of_bits_to_write){
-			char bit = ((1 << read_position_in_bits) & data[read_position_in_bytes]) >> read_position_in_bits;
-			buffer[write_position_in_bytes] = buffer[write_position_in_bytes] | (bit << write_position_in_bits);
+			auto is_bit_set = (1 << read_position_in_bits) & ((char*)data)[read_position_in_bytes];
+			//we also handle unintialized memory here (so we actually overwrite with 0, and don't just expect the memory to already be 0)
+			if(is_bit_set)
+				buffer[write_position_in_bytes] |= (1 << write_position_in_bits);
+			else
+				buffer[write_position_in_bytes] &= ~(1 << write_position_in_bits);
 
 			read_position_in_bits = (read_position_in_bits + 1) % 8;
 			if(read_position_in_bits == 0)
@@ -1205,6 +1206,10 @@ namespace tip_file_format_compressed_binary_v3{
 		}
 
 		return write_position_in_bits + write_position_in_bytes * 8;
+	}
+
+	uint64_t write_bytes_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bytes_to_write){
+		return write_bits_into_buffer(buffer, write_position_in_bits, data, number_of_bytes_to_write * 8);
 	}
 
 	uint64_t read_bits_from_buffer(char* buffer, uint64_t read_position_in_bits, char* data, unsigned number_of_bits_to_read){
@@ -1243,69 +1248,64 @@ namespace tip_file_format_compressed_binary_v3{
 	//call serialize_table to serialize the table
 	struct Huffman_Encoder{
 		struct Node { 
-			//this is what you are here for: the code is in 
-			unsigned code;
-			unsigned code_length;
-
-			unsigned occurences; 
-			Node *left, *right; 
+			//this is what you are here for: the code is in
+			bool is_right_child = false;
+			unsigned occurences;
+			unsigned depth = 0;
+			Node *left = nullptr, *right = nullptr, *previous = nullptr; 
 		};
 
 		Node nodes[256];
 
 		void setup(){
 			for(int i = 0; i < 256; i++){
-				Node* node = &nodes[i];
-				node->occurences = 0;
-				node->left = nullptr;
-				node->right = nullptr;
+				nodes[i] = {};
 			}
 		}
 
 		//https://stackoverflow.com/questions/759707/efficient-way-of-storing-huffman-tree
 
 
-		void count_value(void* memory){
-			nodes[*((char*)memory)].occurences++;
+		void count_value(char* memory){
+			nodes[*reinterpret_cast<unsigned char*>(memory)].occurences++;
 		}
 
 		struct Heap_Comparison_Struct{ 
-			bool operator()(Node* lhs, Node* rhs) const{ 
-				return lhs > rhs; 
+			bool operator()(const Node* lhs, const Node* rhs) const{ 
+				return lhs->occurences > rhs->occurences; 
 			}
 		};
 
-		void assign_codes_to_values(Node* current_node, unsigned code, unsigned code_length){
-			if(!(current_node->left || current_node->right)){
-				current_node->code = code;
-				current_node->code_length = code_length;
-				return;
-			}
-
-			unsigned left_code  = (0 << code_length) | code; //I know that this line is useless, but it makes clearer what happens here
-			unsigned right_code = (1 << code_length) | code;
-
-			assign_codes_to_values(current_node->left , left_code , code_length + 1);
-			assign_codes_to_values(current_node->right, right_code, code_length + 1);
-		}
 
 		std::vector<Node*> internal_nodes;
 		Node* root_node = nullptr;
 
+		unsigned assign_depths(unsigned depth, Node* node){
+			node->depth = depth;
+			if(!node->left || !node->right)
+				return depth;
+
+			unsigned left_tree_depth = assign_depths(depth + 1, node->left);
+			unsigned right_tree_depth = assign_depths(depth + 1, node->right);
+			
+			return (left_tree_depth > right_tree_depth) ? left_tree_depth : right_tree_depth;
+		}
+
 		void create_encoder_data(){
 			std::vector<Node*> heap;
 			for(int i = 0; i < 256; i++){
-				heap.push_back(&nodes[i]);
+				heap.push_back(nodes + i);
 			}
 			std::make_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 
 			//we get rid of all nodes for values that didn't appear in the data to compress. That way the serialized tree will be smaller
 			while(true){
+				std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
+				
 				auto smallest = heap.back();
 				if(smallest->occurences != 0)
 					break;
 
-				std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 				heap.pop_back();
 			}
 
@@ -1322,44 +1322,69 @@ namespace tip_file_format_compressed_binary_v3{
 
 				Node* new_internal_node = new Node();
 				new_internal_node->occurences = smallest->occurences + second_smallest->occurences;
+				
 				new_internal_node->left = smallest;
-				new_internal_node->right = second_smallest;
+				smallest->previous = new_internal_node;
+				smallest->is_right_child = false;
 
-				internal_nodes.push_back(new_internal_node);
+				new_internal_node->right = second_smallest;
+				second_smallest->previous = new_internal_node;
+				second_smallest->is_right_child = true;
 
 				root_node = new_internal_node;
+				internal_nodes.push_back(new_internal_node);
+				
+				if (heap.empty())
+					break;
 
 				heap.push_back(new_internal_node);
 				std::push_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
 			}
 
-			assign_codes_to_values(root_node_after_loop, 0, 0);
+			printf("max code length is %d", int(assign_depths(0, root_node)));
 		}
 
-		void encode_value(char value, unsigned* code, unsigned* code_length_in_bits){
-			*code = nodes[value].code;
-			*code_length_in_bits = nodes[value].code_length;
+		uint64_t serialize_encoded_value(char* buffer, uint64_t write_position_in_bits, char* value){
+			Node* node = &nodes[*reinterpret_cast<unsigned char*>(value)];
+			unsigned total_code_length = node->depth;
+
+			while(node->depth > 0){
+				write_bits_into_buffer(buffer, write_position_in_bits + node->depth - 1, &node->is_right_child, 1);
+				node = node->previous;
+			}
+
+			return write_position_in_bits + total_code_length;
 		}
 
 		uint64_t get_serialized_size_for_subtree(Node* node){
 			if(!(node->left || node->right))
 				return 1 + 8; //1 bit for saving that this is a leaf node, 8 bit for storing the original data value
 			else
-				return 1 + get_size_for_subtree(node->left) + get_size_for_subtree(node->right);  
+				return 1 + get_serialized_size_for_subtree(node->left) + get_serialized_size_for_subtree(node->right);  
 		}
 
 		uint64_t get_table_size_when_serialized(){
-			return get_size_for_subtree(root_node);
+			return get_serialized_size_for_subtree(root_node) + sizeof(uint64_t);
 		}
 
 		uint64_t serialize_subtree(char* buffer, uint64_t write_position_in_bits, Node* node){
+			if(node->left && node->right){
+				bool value_to_write = 0;
+				write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &value_to_write, 1);
+				write_position_in_bits = serialize_subtree(buffer, write_position_in_bits, node->left);
+				return serialize_subtree(buffer, write_position_in_bits, node->left);
+			}
 
+			bool value_to_write = 1;
+			write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &value_to_write, 1);
+			unsigned char value = (unsigned char)(node - nodes); //leaf nodes are in the node array. their index is the value of the data byte they encode. So we just need to subtract their address from the base address of the array to get their index and in turn their value
+			return write_bits_into_buffer(buffer, write_position_in_bits, &value, sizeof(value));
 		}
 
 		uint64_t serialize_table(char* buffer, uint64_t write_position_in_bits){
-
-	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, char* data, unsigned number_of_bits_to_write){
-
+			uint64_t table_size = get_table_size_when_serialized();
+			write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &table_size, sizeof(table_size));
+			write_position_in_bits = serialize_subtree(buffer, write_position_in_bits, root_node);
 		}
 
 		void destroy(){
@@ -1370,20 +1395,112 @@ namespace tip_file_format_compressed_binary_v3{
 
 	};
 
-	void export_snaphsot(char* file_name, tip_Snapshot snapshot){
-			auto buffer_size = 0;//get_conservative_size_estimate_for_serialized_snapshot(snapshot);
-			char* buffer = (char*)malloc(buffer_size);
-			char* buffer_initial_position = buffer;
+	//this is just so you know what buffer size you need when serializing a snapshot. This caculates the size of a serialization that just literaly serialized all the information in the snapshot without doing anything to them + some more to be sure. This is meant to always overestimate, never underestimate.
+	uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
+		return snapshot.thread_ids.size * sizeof(uint32_t) // all the factors that can scale
+		     + snapshot.names.name_buffer.size * sizeof(char)
+		     + snapshot.names.name_indices.size * sizeof(uint64_t)
+		     + snapshot.number_of_events * sizeof(tip_Event)
+		     + sizeof(tip_Snapshot) + 2048; // accounting for constant sizes. The 2048 is just there so we can be absolutely sure we never underestimate
+	}
+
+	uint64_t export_snaphsot(char* file_name, tip_Snapshot snapshot){
+		auto buffer_size = get_conservative_size_estimate_for_serialized_snapshot(snapshot);
+		char* buffer = (char*)malloc(buffer_size);
+		char* buffer_initial_position = buffer;
 
 
-			const char* text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+		const char* text_header = "This is the compressed binary format v3 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
 
-			const uint64_t text_header_size = tip_strlen(text_header);
-			const uint64_t version = 2;
+		const uint64_t text_header_size = tip_strlen(text_header);
+		const uint64_t version = 3;
 
-			snapshot.number_of_events = 0;
-			file_name = nullptr;
-			buffer_initial_position = nullptr;
+		assert(text_header_size < 200);
+		snapshot.number_of_events = 0;
+		file_name = nullptr;
+		buffer_initial_position = nullptr;
+
+		uint64_t write_position_in_bits = 0;
+		write_position_in_bits = write_bytes_into_buffer(buffer, write_position_in_bits, text_header, unsigned(text_header_size + 1));
+		write_position_in_bits = 200 * 8;
+
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, version);
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.clocks_per_second); 
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.process_id); 
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.number_of_events); 
+
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.names.name_buffer.size);
+		write_position_in_bits = write_bytes_into_buffer(buffer, write_position_in_bits, snapshot.names.name_buffer.buffer, unsigned(snapshot.names.name_buffer.size));
+
+
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.thread_ids.size);
+		for(uint64_t i = 0; i < snapshot.thread_ids.size; i++){
+			write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.thread_ids[i]);
+		}
+
+		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.names.count);
+		
+		uint64_t event_type_size = tip_number_of_bytes_needed_to_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
+		printf("event type size is %llu bit\n", event_type_size);
+
+		uint64_t name_count = 0;
+
+		tip_Dynamic_Array<uint64_t> name_index_coversion_table;
+		name_index_coversion_table.insert(uint64_t(0), snapshot.names.name_buffer.size);
+
+		for(uint64_t i = 0; i < snapshot.names.name_indices.size; i++){
+			int64_t name_index = snapshot.names.name_indices[i];
+			if(name_index != -1){
+				write_position_in_bits = serialize_value(buffer, write_position_in_bits, name_index);
+				name_index_coversion_table[name_index] = name_count;
+				name_count++;
+			}
+		}
+
+		uint64_t converted_name_index_size = tip_number_of_bytes_needed_to_represent_number(name_count);
+		printf("converted name index size is %llu bit\n", converted_name_index_size);
+
+
+		//we don't necessairily store the diff in the size that would be perfect for it, because that would mean we would need 6 bits to just communcate the bit-length of the diff (2^6 = 64). Instead we have these 8 predefined sizes that a diff can have. The smallest one that it fits is picked. We the just transmit the index in this array (3 bits) as length information
+		uint64_t diff_possible_bit_sizes[] = {7, 8, 9, 10, 12, 16, 22, 64}; //you can tweak this to find out what's best for you
+		uint64_t number_of_diff_sizes = sizeof(diff_possible_bit_sizes) / sizeof(uint64_t);
+		uint64_t diff_size_size = tip_number_of_bytes_needed_to_represent_number(number_of_diff_sizes);
+		printf("diff size size is %llu bit\n", diff_size_size);
+		assert(diff_size_size == 3);
+
+		for(uint64_t i = 0; i < snapshot.events.size; i++){
+			write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.events[i].size);
+
+			if(snapshot.events[i].size == 0){
+				continue;
+			}
+
+			uint64_t prev_timestamp = 0;
+			for(uint64_t j = 0; j < snapshot.events[i].size; j++){
+				tip_Event event = snapshot.events[i][j];
+				uint64_t diff = event.timestamp - prev_timestamp;
+				uint64_t diff_bit_size = tip_number_of_bytes_needed_to_represent_number(diff);
+
+				for(uint64_t k = 0; k < number_of_diff_sizes; k++){
+					if(diff_bit_size <= diff_possible_bit_sizes[k]){
+						write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &k, diff_size_size);
+						write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &diff, diff_possible_bit_sizes[k]);
+						break;
+					}
+				}
+
+				write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &event.type, event_type_size);
+
+				if(event.type != tip_Event_Type::stop) //if this a non-async stop event, it has to have the same name as the last start event
+					write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &name_index_coversion_table[event.name_id], converted_name_index_size);
+			}
+		}
+		
+		return write_position_in_bits / 8;
+	}
+
+}
+
 			//ansatz für harte kompression:
 			//für die namen: 
 			//für den character buffer eine hoffman tabelle über die bytes laufen lassen 
@@ -1399,9 +1516,5 @@ namespace tip_file_format_compressed_binary_v3{
 			//dahinter den diff speichern
 			//dahinter den namens-index speichern
 			//für nicht-asynchron schließende events kann man den namens-index auslassen
-
-	}
-
-}
 
 #endif
