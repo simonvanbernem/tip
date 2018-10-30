@@ -47,7 +47,7 @@ int main(int argc, char* argv[]){
 			printf("There were errors! Converting aborted.");
 			return -1;
 		}
-
+		/*
 		auto snapshot = tip_import_snapshot_from_compressed_binary(argv[1]);
 		int64_t size = tip_export_snapshot_to_chrome_json(snapshot, argv[2]);
 
@@ -57,6 +57,7 @@ int main(int argc, char* argv[]){
 			printf("%.2f KiB", double(size) / 1024.);
 		else
 			printf("%.2f MiB", double(size) / (1024. * 1024));
+		*/
 
 		printf(")");
 	}

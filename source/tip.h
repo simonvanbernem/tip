@@ -130,7 +130,7 @@ struct tip_Dynamic_Array{
 			buffer = (T*) realloc(buffer, capacity * sizeof(T));
 		}
 
-		memcpy(buffer + size, elements, number_of_elements);
+		memcpy(buffer + size, elements, number_of_elements * sizeof(T));
 
 		size = new_size;
 	}
@@ -190,7 +190,7 @@ struct tip_String_Interning_Hash_Table{
 		name_indices.insert(-1, size);
 	}
 
-	uint32_t fvn_hash(const char* string, uint64_t length)
+	static uint32_t fvn_hash(const char* string, uint64_t length)
 	{
 		uint32_t hash = 2166136261; // offset basis (32 bits)
 		for (uint64_t i = 0; i < length; i++){
@@ -326,9 +326,6 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 static const char* tip_compressed_binary_text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
 static const uint64_t tip_compressed_binary_version = 2;
 
-int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* file_name);
-tip_Snapshot tip_import_snapshot_from_compressed_binary(char* file_name);
-
 
 
 	#define TIP_CONCAT_LINE_NUMBER(x, y) x ## y // and you also need this somehow. c++ is stupid
@@ -375,27 +372,6 @@ uint64_t tip_get_serialized_value_size(T value){
 	return sizeof(T);
 }
 
-template<typename T>
-char* tip_unserialize_dynamic_array(char* buffer, tip_Dynamic_Array<T>* array){
-	uint64_t size;
-	buffer = tip_unserialize_value(buffer, &size);
-	array->init(size);
-	array->size = size;
-	memcpy(array->buffer, buffer, size * sizeof(T));
-	return buffer + sizeof(T) * size;
-}
-
-template<typename T>
-char* tip_serialize_dynamic_array(char* buffer, tip_Dynamic_Array<T> array){
-	buffer = tip_serialize_value(buffer, array.size);
-	memcpy(buffer, array.buffer, array.size * sizeof(T));
-	return buffer + sizeof(T) * array.size;
-}
-
-template<typename T>
-uint64_t tip_get_serialized_dynamic_array_size(tip_Dynamic_Array<T> array){
-	return sizeof(array.size) + array.size * sizeof(T);
-}
 
 #endif //END HEADER
 
@@ -901,249 +877,6 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 	return size;
 }
 
-uint64_t tip_number_of_bytes_needed_to_represent_number(uint64_t number){
-	uint64_t number_of_bytes = 1;
-	while(number >= 1llu << (number_of_bytes * 8))
-		number_of_bytes++;
-	return number_of_bytes;
-}
-
-uint64_t tip_number_bits_needed_ro_represent_number(uint64_t number) {
-	uint64_t number_of_bits = 1;
-	while (number >= 1llu << number_of_bits)
-		number_of_bits++;
-	return number_of_bits;
-
-}
-
-char* tip_serialize_number_with_number_of_bytes(char* buffer, uint64_t number, uint64_t bytes){
-	memcpy(buffer, &number, bytes);
-	return buffer += bytes;
-}
-
-char* tip_unserialize_number_with_number_of_bytes(char* buffer, uint64_t* number, uint64_t bytes){
-	memcpy(number, buffer, bytes);
-	return buffer += bytes;
-}
-
-int64_t tip_export_snapshot_to_compressed_binary(tip_Snapshot snapshot, char* file_name){
-	uint64_t name_index_size_in_bytes = 0;
-	uint64_t timestamp_size_in_bytes = 0;
-
-	uint64_t file_size = 0;
-
-	file_size += 200; //this is for the text header
-
-	file_size += tip_get_serialized_value_size(tip_compressed_binary_version);
-	file_size += tip_get_serialized_value_size(snapshot.clocks_per_second); 
-	file_size += tip_get_serialized_value_size(snapshot.process_id); 
-	file_size += tip_get_serialized_value_size(snapshot.number_of_events); 
-	file_size += tip_get_serialized_value_size(snapshot.names.count);
-	file_size += tip_get_serialized_value_size(name_index_size_in_bytes);
-	file_size += tip_get_serialized_value_size(timestamp_size_in_bytes);
-
-	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_buffer);
-	file_size += tip_get_serialized_dynamic_array_size(snapshot.names.name_indices); 
-
-	file_size += tip_get_serialized_dynamic_array_size(snapshot.thread_ids); 
-	
-	uint64_t number_of_diffable_events = 0;
-	uint64_t number_of_first_events = 0;
-	{
-		uint64_t highest_possible_name_id = snapshot.names.name_buffer.size;
-		name_index_size_in_bytes = tip_number_of_bytes_needed_to_represent_number(highest_possible_name_id);
-
-		uint64_t highest_diff_between_two_timestamps = 0;
-
-		for(int i = 0; i < snapshot.events.size; i++){
-			if(snapshot.events[i].size == 0)
-				continue;
-
-			int64_t prev_timestamp = snapshot.events[i][0].timestamp;
-			number_of_first_events++;
-
-			for(int j = 1; j < snapshot.events[i].size; j++){
-				number_of_diffable_events++;
-				int64_t current_timestamp = snapshot.events[i][j].timestamp;
-				uint64_t diff = uint64_t(current_timestamp - prev_timestamp);
-				prev_timestamp = current_timestamp;
-				if(highest_diff_between_two_timestamps < diff)
-					highest_diff_between_two_timestamps = diff;
-			}
-		}
-
-		timestamp_size_in_bytes = tip_number_of_bytes_needed_to_represent_number(highest_diff_between_two_timestamps);
-	}
-
-	//how many bytes we need to store all the sizes of all the arrays in the events buffer + the size of the outer buffer itsself
-	file_size += tip_get_serialized_value_size(snapshot.events.size) * (snapshot.events.size + 1);
-
-	//we cant compress the size of the timetamps of the first event by diffing, because we need a start point for diffing
-	file_size += (name_index_size_in_bytes + sizeof(tip_Event::timestamp) + sizeof(tip_Event_Type)) * number_of_first_events;
-	file_size += (name_index_size_in_bytes + timestamp_size_in_bytes      + sizeof(tip_Event_Type)) * number_of_diffable_events;
-
-
-	char* initial_buffer_position = (char*) malloc(file_size);
-	char* buffer = initial_buffer_position;
-
-	uint64_t text_header_size = tip_strlen(tip_compressed_binary_text_header);
-	memcpy(buffer, tip_compressed_binary_text_header, text_header_size);
-	buffer += text_header_size;
-
-	//padding until we reach 200 bytes. we do this, so people reading this format can rely on the version number to be at byte 201
-	memset(buffer, 0, 200 - text_header_size);
-	buffer += 200 - text_header_size;
-
-	buffer = tip_serialize_value(buffer, tip_compressed_binary_version);
-	buffer = tip_serialize_value(buffer, snapshot.clocks_per_second); 
-	buffer = tip_serialize_value(buffer, snapshot.process_id); 
-	buffer = tip_serialize_value(buffer, snapshot.number_of_events); 
-	buffer = tip_serialize_value(buffer, snapshot.names.count);
-	buffer = tip_serialize_value(buffer, name_index_size_in_bytes);
-	buffer = tip_serialize_value(buffer, timestamp_size_in_bytes);
-
-	printf("name index size: %llu\ntimestamp size: %llu\n", name_index_size_in_bytes, timestamp_size_in_bytes);
-
-	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_buffer);
-	buffer = tip_serialize_dynamic_array(buffer, snapshot.names.name_indices); 
-	buffer = tip_serialize_dynamic_array(buffer, snapshot.thread_ids); 
-
-	buffer = tip_serialize_value(buffer, snapshot.events.size);
-
-	for(int i = 0; i < snapshot.thread_ids.size; i++){
-		buffer = tip_serialize_value(buffer, snapshot.events[i].size);
-		if(snapshot.events[i].size == 0)
-			continue;
-
-		buffer = tip_serialize_number_with_number_of_bytes(buffer, snapshot.events[i][0].timestamp        , sizeof(uint64_t)        );
-		buffer = tip_serialize_number_with_number_of_bytes(buffer, uint64_t(snapshot.events[i][0].name_id), name_index_size_in_bytes);
-		buffer = tip_serialize_value(buffer, snapshot.events[i][0].type);
-
-		uint64_t prev_timestamp = snapshot.events[i][0].timestamp;
-
-		for(int j = 1; j < snapshot.events[i].size; j++){
-			int64_t current_timestamp = snapshot.events[i][j].timestamp;
-			uint64_t diff = uint64_t(current_timestamp - prev_timestamp);
-			prev_timestamp = current_timestamp;
-			buffer = tip_serialize_number_with_number_of_bytes(buffer, diff, timestamp_size_in_bytes);
-			buffer = tip_serialize_number_with_number_of_bytes(buffer, uint64_t(snapshot.events[i][j].name_id), name_index_size_in_bytes);
-			buffer = tip_serialize_value(buffer, snapshot.events[i][j].type);
-		}
-	}
-
-	assert(snapshot.thread_ids.size == snapshot.events.size);
-	assert(buffer == initial_buffer_position + file_size);
-
-
-	FILE* file = nullptr;
-	fopen_s(&file, file_name, "wb");
-	fwrite(initial_buffer_position, file_size, 1, file);
-	fclose(file);
-	free(initial_buffer_position);
-
-	return file_size;
-}
-
-tip_Snapshot tip_import_snapshot_from_compressed_binary(char* file_name){
-	tip_Snapshot snapshot;
-
-	char* initial_buffer_position;
-	uint64_t file_size;
-
-	{
-		FILE* file;
-
-		fopen_s(&file, file_name, "rb");
-		fseek(file, 0, SEEK_END);
-		file_size = ftell(file); 
-		rewind(file);
-
-		initial_buffer_position = (char*)malloc(file_size);
-		fread(initial_buffer_position, file_size, 1, file);
-		fclose(file);
-	}
-
-	char* buffer = initial_buffer_position;
-
-	buffer += 200; //200 is the max size of the text header
-
-	uint64_t version;
-	buffer = tip_unserialize_value(buffer, &version);
-
-	assert(version == tip_compressed_binary_version);
-
-	uint64_t name_index_size_in_bytes = 0;
-	uint64_t timestamp_size_in_bytes = 0;
-
-	buffer = tip_unserialize_value(buffer, &snapshot.clocks_per_second); 
-	buffer = tip_unserialize_value(buffer, &snapshot.process_id); 
-	buffer = tip_unserialize_value(buffer, &snapshot.number_of_events); 
-	buffer = tip_unserialize_value(buffer, &snapshot.names.count);
-	buffer = tip_unserialize_value(buffer, &name_index_size_in_bytes);
-	buffer = tip_unserialize_value(buffer, &timestamp_size_in_bytes);
-
-
-	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_buffer);
-	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.names.name_indices); 
-	buffer = tip_unserialize_dynamic_array(buffer, &snapshot.thread_ids); 
-
-
-	uint64_t number_of_event_buffers = 0;
-	buffer = tip_unserialize_value(buffer, &number_of_event_buffers);
-	snapshot.events.init(number_of_event_buffers);
-
-	for(int i = 0; i < snapshot.thread_ids.size; i++){
-		snapshot.events.insert({});
-
-		uint64_t number_of_events_in_this_buffer = 0;
-		buffer = tip_unserialize_value(buffer, &number_of_events_in_this_buffer);
-		if(number_of_events_in_this_buffer == 0)
-			continue;
-
-		snapshot.events[i].init(number_of_events_in_this_buffer);
-
-		tip_Event first_event;
-
-		buffer = tip_unserialize_number_with_number_of_bytes(buffer, &first_event.timestamp, sizeof(uint64_t));
-		{
-			uint64_t name_id = 0; 
-			buffer = tip_unserialize_number_with_number_of_bytes(buffer, &name_id, name_index_size_in_bytes);
-			first_event.name_id = int64_t(name_id);
-		}
-		buffer = tip_unserialize_value(buffer, &first_event.type);
-
-		snapshot.events[i].insert(first_event);
-
-		uint64_t prev_timestamp = first_event.timestamp;
-
-		for(int j = 1; j < number_of_events_in_this_buffer; j++){
-			tip_Event event;
-
-			uint64_t diff = 0;
-			buffer = tip_unserialize_number_with_number_of_bytes(buffer, &diff, timestamp_size_in_bytes);
-			event.timestamp = prev_timestamp + diff;
-			prev_timestamp = event.timestamp;
-
-			{
-				uint64_t name_id = 0;
-				buffer = tip_unserialize_number_with_number_of_bytes(buffer, &name_id, name_index_size_in_bytes);
-				event.name_id = int64_t(name_id);
-			}
-
-			buffer = tip_unserialize_value(buffer, &event.type);
-
-			snapshot.events[i].insert(event);
-		}
-	}
-
-	assert(snapshot.thread_ids.size == snapshot.events.size);
-	assert(buffer == initial_buffer_position + file_size);
-	free(initial_buffer_position);
-
-	return snapshot;
-}
-
-
 void tip_free_snapshot(tip_Snapshot snapshot){
 	snapshot.names.name_buffer.destroy();
 	snapshot.names.name_indices.destroy();
@@ -1172,13 +905,48 @@ namespace tip_file_format_compressed_binary_v3{
 
 
 	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bits_to_write);
-	uint64_t write_bytes_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bytes_to_write);
 
 	template<typename T>
 	uint64_t serialize_value(char* buffer, uint64_t write_position_in_bits, T value){
 		return write_bits_into_buffer(buffer, write_position_in_bits, &value, sizeof(T));
 	}
 
+	template<typename T>
+	void serialize_value_byte_aligned(char** buffer, T value){
+		*(T*)(*buffer) = value;
+		*buffer += sizeof(T);
+	}
+
+	template<typename T>
+	void deserialize_value_byte_aligned(char** buffer, T* value){
+		*value = *(T*)(*buffer);
+		*buffer += sizeof(T);
+	}
+
+
+	void serialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size);
+	void serialize_zeros_byte_aligned(char** buffer, uint64_t count);
+	void serialize_range_bit_aligned(char* buffer, uint64_t& write_position_in_bits, void* range, uint64_t bits_to_write);
+
+	void deserialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size);
+	void deserialize_range_bit_aligned(char* buffer, uint64_t& write_position_in_bits, void* range, uint64_t bits_to_range);
+
+	template<typename T>
+	void deserialize_dynamic_array_byte_aligned(char** buffer, tip_Dynamic_Array<T>* array){
+		uint64_t size;
+		deserialize_value_byte_aligned(buffer, &size);
+		array->init(size);
+		array->size = size;
+		memcpy(array->buffer, *buffer, size * sizeof(T));
+		*buffer += sizeof(T) * size;
+	}
+
+	template<typename T>
+	void serialize_dynamic_array_byte_aligned(char** buffer, tip_Dynamic_Array<T> array){
+		serialize_value_byte_aligned(buffer, array.size);
+		memcpy(*buffer, array.buffer, array.size * sizeof(T));
+		*buffer += sizeof(T) * array.size;
+	}
 }
 
 #endif
@@ -1186,62 +954,86 @@ namespace tip_file_format_compressed_binary_v3{
 #if defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3) && defined(TIP_IMPLEMENTATION)
 
 namespace tip_file_format_compressed_binary_v3{
+	void serialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size){
+		memcpy(*buffer, range, range_size);
+		*buffer += range_size;
+	}
+
+	void serialize_zeros_byte_aligned(char** buffer, uint64_t count){
+		for(uint64_t i = 0; i < count; i++)
+			(*buffer)[i] = 0;
+		*buffer += count;
+	}
+
+	void deserialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size){
+		memcpy(range, *buffer, range_size);
+		*buffer += range_size;
+	}
+
+	uint64_t get_number_bits_needed_to_represent_number(uint64_t number) {
+		uint64_t number_of_bits = 1;
+		while (number >= 1llu << number_of_bits)
+			number_of_bits++;
+		return number_of_bits;
+
+	}
+
+	
 
 	//this writes number_of_bits_to_write bits from data to buffer. The write is offset by write_position_in_bits bits
 	//the return value is the first bit in buffer after the written data
-	uint64_t write_bits_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bits_to_write){
-		uint64_t write_position_in_bytes = write_position_in_bits / 8;
-		write_position_in_bits = write_position_in_bits % 8;
+	void serialize_range_bit_aligned_bit_length(char* buffer, uint64_t* write_position_in_bits, void* range, uint64_t bits_to_write){
+		uint64_t write_position_bytes_part = *write_position_in_bits / 8;
+		uint64_t write_position_bits_part = *write_position_in_bits % 8;
 
 		uint64_t read_position_in_bytes = 0;
 		uint64_t read_position_in_bits = 0;
 
-		while(read_position_in_bits + read_position_in_bytes * 8 < number_of_bits_to_write){
-			auto is_bit_set = (1 << read_position_in_bits) & ((char*)data)[read_position_in_bytes];
+		while(read_position_in_bits + read_position_in_bytes * 8 < bits_to_write){
+			auto is_bit_set = (1 << read_position_in_bits) & ((char*)range)[read_position_in_bytes];
 			//we also handle unintialized memory here (so we actually overwrite with 0, and don't just expect the memory to already be 0)
 			if(is_bit_set)
-				buffer[write_position_in_bytes] |= (1 << write_position_in_bits);
+				buffer[write_position_bytes_part] |= (1 << write_position_bits_part);
 			else
-				buffer[write_position_in_bytes] &= ~(1 << write_position_in_bits);
+				buffer[write_position_bytes_part] &= ~(1 << write_position_bits_part);
 
 			read_position_in_bits = (read_position_in_bits + 1) % 8;
 			if(read_position_in_bits == 0)
 				read_position_in_bytes++;
 
-			write_position_in_bits = (write_position_in_bits + 1) % 8;
-			if(write_position_in_bits == 0)
-				write_position_in_bytes++;
+			write_position_bits_part = (write_position_bits_part + 1) % 8;
+			if(write_position_bits_part == 0)
+				write_position_bytes_part++;
 		}
 
-		return write_position_in_bits + write_position_in_bytes * 8;
+		*write_position_in_bits += bits_to_write;
 	}
 
-	uint64_t write_bytes_into_buffer(char* buffer, uint64_t write_position_in_bits, const void* data, uint64_t number_of_bytes_to_write){
-		return write_bits_into_buffer(buffer, write_position_in_bits, data, number_of_bytes_to_write * 8);
-	}
-
-	uint64_t read_bits_from_buffer(char* buffer, uint64_t read_position_in_bits, char* data, unsigned number_of_bits_to_read){
-		uint64_t read_position_in_bytes = read_position_in_bits / 8;
-		read_position_in_bits = read_position_in_bits % 8;
+	void deserialize_range_bit_aligned_bit_length(char* buffer, uint64_t* read_position_in_bits, void* data, uint64_t bits_to_read){
+		uint64_t read_position_bytes_part = *read_position_in_bits / 8;
+		uint64_t read_position_bits_part = *read_position_in_bits % 8;
 
 		uint64_t write_position_in_bytes = 0;
 		uint64_t write_position_in_bits = 0;
 
-		while(write_position_in_bits + write_position_in_bytes * 8 < number_of_bits_to_read){
-			char bit = ((1 << read_position_in_bits) & buffer[read_position_in_bytes]) >> read_position_in_bits;
-			data[write_position_in_bytes] = data[write_position_in_bytes] | (bit << write_position_in_bits);
+		while(write_position_in_bits + write_position_in_bytes * 8 < bits_to_read){
+			auto is_bit_set = (1 << read_position_bits_part) & buffer[read_position_bytes_part];
+			//we also handle unintialized memory here (so we actually overwrite with 0, and don't just expect the memory to already be 0)
+			if (is_bit_set)
+				((char*)data)[write_position_in_bytes] |= (1 << write_position_in_bits);
+			else
+				((char*)data)[write_position_in_bytes] &= ~(1 << write_position_in_bits);
 
-			read_position_in_bits = (read_position_in_bits + 1) % 8;
-			if(read_position_in_bits == 0)
-				read_position_in_bytes++;
+			read_position_bits_part = (read_position_bits_part + 1) % 8;
+			if(read_position_bits_part == 0)
+				read_position_bytes_part++;
 
 			write_position_in_bits = (write_position_in_bits + 1) % 8;
 			if(write_position_in_bits == 0)
 				write_position_in_bytes++;
 		}
 
-		return read_position_in_bits + read_position_in_bytes * 8;
-
+		*read_position_in_bits += bits_to_read;
 	}
 
 
@@ -1412,117 +1204,332 @@ namespace tip_file_format_compressed_binary_v3{
 		     + sizeof(tip_Snapshot) + 2048; // accounting for constant sizes. The 2048 is just there so we can be absolutely sure we never underestimate
 	}
 
-	uint64_t export_snaphsot(char* file_name, tip_Snapshot snapshot){
-		auto buffer_size = get_conservative_size_estimate_for_serialized_snapshot(snapshot);
-		char* buffer = (char*)malloc(buffer_size);
-		char* buffer_initial_position = buffer;
+	//THIS IS OLD, DONT USE IT!!
+	//this is a short description of the format tip compressed binary version 3 (tcb3):
+	//this exporter does not account for endianness, so if you are on x86 multi-byte values are probably stored little endian
+	//100 bytes: null terminated ascii text header + padding, so you know what this file is if you open it in a text editor
+	//8 bytes / 64-bit unsigned integer: format version number (this must always be 3 for this format)
+	//8 bytes / 64-bit double precision floating point: clocks_per_second
+	//4 bytes / 32-bit unsigned integer: process_id
+	//8 bytes / 64-bit unsigned integer: total number of events
+	//8 bytes / 64-bit unsigned integer: size of the name buffer in bytes
+	//name_buffer_size: name_buffer, contains the names of all events packed as utf8. Every name in this namebuffer is terminated with a 0 byte
+	//8 bytes / 64-bit unsigned integer: number of threads recorded
+	//4 bytes * number of threads: id_buffer contains an ID for each thread as 4 byte / 32-bit unsigned integer
+	//8 bytes / 64-bit unsigned integer: contains the number of names in the name buffer
+	//variable: offset_buffer contains an offset for each name as 8 byte / 64-bit unsigned integer
+	//    If an event says it has name #X, you will need to reference offset #X in this buffer. 
+	//    This offset then points to the starting character of that name in the name buffer.
+	//    For example: event has name #0, offset #0 is 15, the name starts with the 16th (counted from 1) byte of the name_buffer
+	//for each thread:
+	//    8 bytes / 64-bit unsigned integer: number of events in that thread
+	//    for each event in that thread:
+	//        3-bit unsigned integer: an index in the length table.
+	//            The corresponding value in the length table is the size of the following timestamp-diff in bit
+	//            The length table: [7-bit, 8-bit, 9-bit, 10-bit, 12-bit, 16-bit, 22-bit, 64-bit]
+	//            For example: if the 3-bit index is 2, the following timestamp-diff will be 9 bits long
+	//        per value variable: the difference, in clock cycles to the previous event in this thread as an unsigned integer
+	//            The size of this value is given with the previous index.
+	//            The first event does not give this value in realtion to a previous event, but as an absolute.
+	//            For example: if this is 926, this event has occured 926 clocks cycles after the previous event
+	//                         if the event is the first event, the event has occured at 926 clock cycles
+	//        per file variable: the name index as an unsigned integer
+	//            The size of this value is the size of bits needed to represent the highest possible index, which in turn is the number of names - 1
+	//                if this is a synchronous stop event, this value is ommited, since it has to be the same name, of the last synchronous start event on this thread (otherwise the snapshot was malformed)
+	//            For example: if there are 256 names, this value is 8 bits long, because 8 bits is the smallest number of bits needed to represent 265 values. if there are 257 names, this value is 9 bits long.
+	//                if this value is 20, the offset at which to find the first character of this name is the 21st (counted from 1) in the offset_buffer
 
+	tip_Dynamic_Array<uint64_t> get_default_diff_sizes(){
+		uint64_t diff_sizes_buffer[] = {7, 8, 9, 10, 12, 16, 22, 64};
+		uint64_t number_of_diff_sizes = sizeof(diff_sizes_buffer) / sizeof(uint64_t);
 
-		const char* text_header = "This is the compressed binary format v3 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
+		tip_Dynamic_Array<uint64_t> default_diff_sizes;
+		default_diff_sizes.init(number_of_diff_sizes);
+		default_diff_sizes.insert(diff_sizes_buffer, number_of_diff_sizes);
+		return default_diff_sizes;
+	}
 
-		const uint64_t text_header_size = tip_strlen(text_header);
-		const uint64_t version = 3;
+	void write_entire_file(char* file_name, tip_Dynamic_Array<char> file_buffer){
+		FILE* file = nullptr;
+		fopen_s(&file, file_name, "wb");
+		fwrite(file_buffer.buffer, file_buffer.size, 1, file);
+		fclose(file);
+	}
 
-		assert(text_header_size < 200);
-		snapshot.number_of_events = 0;
-		file_name = nullptr;
-		buffer_initial_position = nullptr;
-
-		uint64_t write_position_in_bits = 0;
-		write_position_in_bits = write_bytes_into_buffer(buffer, write_position_in_bits, text_header, unsigned(text_header_size + 1));
-		write_position_in_bits = 200 * 8;
-
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, version);
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.clocks_per_second); 
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.process_id); 
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.number_of_events); 
-
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.names.name_buffer.size);
-		write_position_in_bits = write_bytes_into_buffer(buffer, write_position_in_bits, snapshot.names.name_buffer.buffer, unsigned(snapshot.names.name_buffer.size));
-
-
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.thread_ids.size);
-		for(uint64_t i = 0; i < snapshot.thread_ids.size; i++){
-			write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.thread_ids[i]);
-		}
-
-		write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.names.count);
+	uint64_t export_snaphsot(char* file_name, tip_Snapshot snapshot, tip_Dynamic_Array<uint64_t>* diff_sizes = nullptr){
+		tip_Dynamic_Array<uint64_t> default_diff_sizes; //this variable is here to go out of scope because we use a pointer to that
 		
-		uint64_t event_type_size = tip_number_bits_needed_ro_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
-		printf("event type size is %llu bit\n", event_type_size);
+		((void)file_name);
+		if(!diff_sizes){
+			default_diff_sizes = get_default_diff_sizes();
+			diff_sizes = &default_diff_sizes;
+		}
 
-		uint64_t name_count = 0;
+		uint64_t buffer_size = get_conservative_size_estimate_for_serialized_snapshot(snapshot);
+		printf("conservative size estimate is %lluB\n", buffer_size);
+		char* buffer = (char*)malloc(buffer_size);
+		char* initial_buffer_position = buffer;
 
-		tip_Dynamic_Array<uint64_t> name_index_coversion_table;
-		name_index_coversion_table.insert(uint64_t(0), snapshot.names.name_buffer.size);
+		{//text header, padding and version
+			char* text_header = "This is the tcb3 file format! (tip compressed binary format version 3)\n";
+			uint64_t text_header_size = tip_strlen(text_header);
+			assert(text_header_size < 99);
+			uint64_t text_header_padding_size = 100 - text_header_size;
+			uint64_t version = 3;
 
-		for(uint64_t i = 0; i < snapshot.names.name_indices.size; i++){
-			int64_t name_index = snapshot.names.name_indices[i];
-			if(name_index != -1){
-				write_position_in_bits = serialize_value(buffer, write_position_in_bits, name_index);
-				name_index_coversion_table[name_index] = name_count;
-				name_count++;
+			serialize_range_byte_aligned(&buffer, text_header, text_header_size);
+			serialize_zeros_byte_aligned(&buffer, text_header_padding_size);
+			serialize_value_byte_aligned(&buffer, version);
+		}
+
+		serialize_value_byte_aligned(&buffer, snapshot.clocks_per_second); 
+		serialize_value_byte_aligned(&buffer, snapshot.process_id); 
+		serialize_value_byte_aligned(&buffer, snapshot.number_of_events);
+		serialize_dynamic_array_byte_aligned(&buffer, snapshot.names.name_buffer);
+		serialize_dynamic_array_byte_aligned(&buffer, snapshot.thread_ids);
+		
+
+		tip_Dynamic_Array<uint64_t> name_index_encoding_table;
+		tip_Dynamic_Array<uint64_t> name_index_decoding_table;
+
+		{//populating the tables above
+			name_index_encoding_table.insert(uint64_t(0), snapshot.names.name_buffer.size);
+			name_index_decoding_table.init(snapshot.names.count);
+			
+			auto& name_indices = snapshot.names.name_indices;
+
+			for(uint64_t i = 0; i < name_indices.size; i++){
+				if(name_indices[i] != -1){
+					name_index_encoding_table[name_indices[i]] = name_index_decoding_table.size;
+					name_index_decoding_table.insert(name_indices[i]);
+				}
 			}
 		}
 
-		uint64_t converted_name_index_size = tip_number_bits_needed_ro_represent_number(name_count);
-		printf("converted name index size is %llu bit\n", converted_name_index_size);
+		serialize_dynamic_array_byte_aligned(&buffer, name_index_decoding_table);
+
+		uint64_t substitue_name_index_size = get_number_bits_needed_to_represent_number(name_index_decoding_table.size);
+		uint64_t event_type_size = get_number_bits_needed_to_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
+		uint64_t diff_size_index_size = get_number_bits_needed_to_represent_number(diff_sizes->size - 1);
 
 
-		//we don't necessairily store the diff in the size that would be perfect for it, because that would mean we would need 6 bits to just communcate the bit-length of the diff (2^6 = 64). Instead we have these 8 predefined sizes that a diff can have. The smallest one that it fits is picked. We the just transmit the index in this array (3 bits) as length information
-		uint64_t diff_possible_bit_sizes[] = {7, 8, 9, 10, 12, 16, 22, 64}; //you can tweak this to find out what's best for you
-		uint64_t number_of_diff_sizes = sizeof(diff_possible_bit_sizes) / sizeof(uint64_t) - 1;
-		uint64_t diff_size_size = tip_number_bits_needed_ro_represent_number(number_of_diff_sizes);
-		printf("diff size size is %llu bit\n", diff_size_size);
-		assert(diff_size_size == 3);
+		serialize_value_byte_aligned(&buffer, substitue_name_index_size);
+		serialize_value_byte_aligned(&buffer, event_type_size);
+		serialize_dynamic_array_byte_aligned(&buffer, *diff_sizes);
+		serialize_value_byte_aligned(&buffer, diff_size_index_size);
+		serialize_value_byte_aligned(&buffer, snapshot.names.name_indices.size);
 
-		for(uint64_t i = 0; i < snapshot.events.size; i++){
-			write_position_in_bits = serialize_value(buffer, write_position_in_bits, snapshot.events[i].size);
 
-			if(snapshot.events[i].size == 0){
-				continue;
-			}
+		printf("event type size is %llu bit\n", event_type_size);
+		printf("substitue name index size is %llu bit\n", substitue_name_index_size);
+		printf("diff size index size is %llu bit\n", diff_size_index_size);
 
-			uint64_t prev_timestamp = 0;
-			for(uint64_t j = 0; j < snapshot.events[i].size; j++){
-				tip_Event event = snapshot.events[i][j];
-				uint64_t diff = event.timestamp - prev_timestamp;
-				uint64_t diff_bit_size = tip_number_bits_needed_ro_represent_number(diff);
+		uint64_t total_bytes_written = buffer - initial_buffer_position;
+		{
+			uint64_t write_position_in_bits = 0;
 
-				for(uint64_t k = 0; k < number_of_diff_sizes; k++){
-					if(diff_bit_size <= diff_possible_bit_sizes[k]){
-						write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &k, diff_size_size);
-						write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &diff, diff_possible_bit_sizes[k]);
-						break;
-					}
+			auto& events = snapshot.events;
+
+			for(uint64_t i = 0; i < events.size; i++){
+				serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &events[i].size, sizeof(events[i].size) * 8);
+
+				if(events[i].size == 0){
+					continue;
 				}
 
-				write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &event.type, event_type_size);
+				uint64_t prev_timestamp = 0;
 
-				if(event.type != tip_Event_Type::stop) //if this a non-async stop event, it has to have the same name as the last start event
-					write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &name_index_coversion_table[event.name_id], converted_name_index_size);
+				for(uint64_t j = 0; j < events[i].size; j++){
+					tip_Event event = events[i][j];
+
+					uint64_t diff = event.timestamp - prev_timestamp;
+					uint64_t min_needed_diff_size = get_number_bits_needed_to_represent_number(diff);
+					uint64_t selected_diff_size_index = 0;
+
+					for(auto diff_size : *diff_sizes){
+						if(diff_size >= min_needed_diff_size)
+							break;
+						else
+							selected_diff_size_index++;
+					}
+
+					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &selected_diff_size_index, diff_size_index_size);
+					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &diff, (*diff_sizes)[selected_diff_size_index]);
+					prev_timestamp = event.timestamp;
+
+					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &event.type, event_type_size);
+					if(event.type != tip_Event_Type::stop) //names of stop events have to be the same as the last start event on the stack
+						serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &name_index_encoding_table[event.name_id], substitue_name_index_size);
+				}
 			}
+
+			total_bytes_written += (write_position_in_bits + 7) / 8; //the + 7 effectively rounds up in the integer division
+		}
+
+		assert(total_bytes_written <= buffer_size);
+
+		diff_sizes->destroy();
+		name_index_encoding_table.destroy();
+		name_index_decoding_table.destroy();
+
+		{
+			tip_Dynamic_Array<char> file_buffer;
+			file_buffer.buffer = initial_buffer_position;
+			file_buffer.size = total_bytes_written;
+			file_buffer.capacity = buffer_size;
+			write_entire_file(file_name, file_buffer);
 		}
 		
-		return write_position_in_bits / 8;
+		free(initial_buffer_position);
+		return total_bytes_written;
+	}
+
+	tip_Dynamic_Array<char> read_entire_file(char* file_name){
+		tip_Dynamic_Array<char> file_buffer;
+		FILE* file;
+
+		fopen_s(&file, file_name, "rb");
+		fseek(file, 0, SEEK_END);
+		uint64_t file_size = ftell(file); 
+		rewind(file);
+
+		file_buffer.buffer = (char*)malloc(file_size);
+		file_buffer.size = file_size;
+		file_buffer.capacity = file_size;
+
+		fread(file_buffer.buffer, file_size, 1, file);
+		fclose(file);
+
+		return file_buffer;
+	}
+
+
+	tip_Snapshot import_snaphsot(char* file_name){
+		tip_Snapshot snapshot;
+		tip_Dynamic_Array<char> file_buffer = read_entire_file(file_name);
+		char* buffer = file_buffer.buffer;
+
+		{//text header, padding and version
+		/*
+			char* text_header = "This is the tcb3 file format! (tip compressed binary format version 3)\n";
+			uint64_t text_header_size = tip_strlen(text_header);
+			assert(text_header_size < 99);
+			uint64_t text_header_padding_size = 100 - text_header_size;
+			uint64_t version = 3;
+
+			serialize_range_byte_aligned(&buffer, text_header, text_header_size);
+			serialize_zeros_byte_aligned(&buffer, text_header_padding_size);
+		*/
+			buffer += 100;
+			uint64_t file_version;
+			serialize_value_byte_aligned(&buffer, &file_version);
+		}
+
+		tip_Dynamic_Array<uint64_t> name_index_decoding_table;
+		uint64_t substitue_name_index_size;
+		uint64_t event_type_size;
+		uint64_t diff_size_index_size;
+		tip_Dynamic_Array<uint64_t> diff_sizes;
+
+		{
+			deserialize_value_byte_aligned(&buffer, &snapshot.clocks_per_second); 
+			deserialize_value_byte_aligned(&buffer, &snapshot.process_id); 
+			deserialize_value_byte_aligned(&buffer, &snapshot.number_of_events); 
+			deserialize_dynamic_array_byte_aligned(&buffer, &snapshot.names.name_buffer);
+			deserialize_dynamic_array_byte_aligned(&buffer, &snapshot.thread_ids);
+			deserialize_dynamic_array_byte_aligned(&buffer, &name_index_decoding_table);
+			deserialize_value_byte_aligned(&buffer, &substitue_name_index_size);
+			deserialize_value_byte_aligned(&buffer, &event_type_size);
+			deserialize_dynamic_array_byte_aligned(&buffer, &diff_sizes);
+			deserialize_value_byte_aligned(&buffer, &diff_size_index_size);
+		}
+
+		{//restoring the snapshot.names.name_indices array. This is not needed if you only want to read the snapshot (which is the most likely use case), but it would leave the interning table in an inconsistent state. And it only costs 8 bytes in a multi-kb file, so we might aswell do it
+			uint64_t name_indices_array_size;
+			deserialize_value_byte_aligned(&buffer, &name_indices_array_size);
+
+			snapshot.names.name_indices.insert(-1, name_indices_array_size);
+			snapshot.names.count = name_index_decoding_table.size;
+
+			char* name = snapshot.names.name_buffer.buffer;
+			while(name < snapshot.names.name_buffer.buffer + snapshot.names.name_buffer.size){
+				uint64_t name_length = tip_strlen(name);
+				uint64_t name_indices_position = tip_String_Interning_Hash_Table::fvn_hash(name, name_length) % snapshot.names.name_indices.size;
+				snapshot.names.name_indices[name_indices_position] = name - snapshot.names.name_buffer.buffer;
+				name += name_length + 1;
+			}
+		}
+
+		printf("event type size is %llu bit\n", event_type_size);
+		printf("substitue name index size is %llu bit\n", substitue_name_index_size);
+		printf("diff size index size is %llu bit\n", diff_size_index_size);
+
+		uint64_t total_bytes_written = buffer - file_buffer.buffer;
+
+		{
+			uint64_t write_position_in_bits = 0;
+
+			auto number_of_threads = snapshot.thread_ids.size;
+
+			for(uint64_t i = 0; i < number_of_threads; i++){ //for each thread
+				uint64_t number_of_events;
+				deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &number_of_events, sizeof(number_of_events) * 8);
+
+				snapshot.events.insert({});
+
+				if(number_of_events == 0){
+					continue;
+				}
+
+				tip_Dynamic_Array<uint64_t> last_start_event_name_index_stack = {};
+
+				uint64_t prev_timestamp = 0;
+				for(uint64_t j = 0; j < number_of_events; j++){ // for each event in a thread
+					tip_Event event = {};
+
+					uint64_t diff_size_index = 0;
+					deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &diff_size_index, diff_size_index_size);
+					
+					uint64_t diff_size = diff_sizes[diff_size_index];
+					uint64_t diff = 0;
+					deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &diff, diff_size);
+
+					event.timestamp = prev_timestamp + diff;
+					prev_timestamp = event.timestamp;
+
+					deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &event.type, event_type_size);
+
+					if(event.type == tip_Event_Type::stop){ //has to have the same name as the last start event on the stack
+						assert(last_start_event_name_index_stack.size > 0);
+						event.name_id = last_start_event_name_index_stack[last_start_event_name_index_stack.size - 1];
+						last_start_event_name_index_stack.delete_last();
+					}
+					else{
+						uint64_t substitute_index = 0;
+						deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &substitute_index, substitue_name_index_size);
+						event.name_id = name_index_decoding_table[substitute_index];
+					}
+					
+					if(event.type == tip_Event_Type::start){ //put name on the stack for matching stop event
+						last_start_event_name_index_stack.insert(event.name_id);
+					}
+
+					snapshot.events[i].insert(event);
+				}
+
+				last_start_event_name_index_stack.destroy();
+			}
+
+			total_bytes_written += (write_position_in_bits + 7) / 8; //the + 7 effectively rounds up in the integer division
+		}
+		
+		assert(total_bytes_written == file_buffer.size);
+		file_buffer.destroy();
+		return snapshot;
 	}
 
 }
 
-			//ansatz für harte kompression:
-			//für die namen: 
-			//für den character buffer eine hoffman tabelle über die bytes laufen lassen 
-			//alle namen durchnummerieren
-			//die positionen der urpsprünglichen refenrenzen in name_indices speichern (damit kann man die usprüngliche string-interning-table exakt reproduzieren)
-			
-			//für die events:
-			//den event type in 2 bits speichern
-			//für folgende timestamps immer nur den diff zum vorherigen speichern
-			//jedes diff analysieren wieviel bit es braucht.
-			//mehrere vordefinierte bitlängen für diffs speichern. z.b.: 0 = 6bit, 1 = 8bit, 2 = 10bit, 3 = 12bit, 4 = 18bit, 5 = 26bit, 6 = 32bit, 7 = 64bit
-			//dann die bitlänge immer in 3 bit vor dem eigentlichen diff speichern
-			//dahinter den diff speichern
-			//dahinter den namens-index speichern
-			//für nicht-asynchron schließende events kann man den namens-index auslassen
+
 
 #endif

@@ -42,11 +42,13 @@ void main(){
 	//tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
 	//tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
 	//auto snapshot2 = tip_import_snapshot_from_compressed_binary("binary.snapshot");
-	auto siez = tip_file_format_compressed_binary_v3::export_snaphsot("binary.ssss", snapshot);
-	printf("v3 snapshot is %llu bytes big\n", siez);
+	auto size = tip_file_format_compressed_binary_v3::export_snaphsot("binary.ssss", snapshot);
+	auto snapshot2 = tip_file_format_compressed_binary_v3::import_snaphsot("binary.ssss");
+	printf("v3 snapshot is %llu bytes big\n", size);
 
-	/*
+
 	assert(snapshot == snapshot2);
+	/*
 
 	tip_free_snapshot(snapshot);
 
