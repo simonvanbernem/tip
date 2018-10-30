@@ -669,8 +669,8 @@ double tip_global_init(){
 	return 1. / tip_global_state.clocks_per_second;
 }
 
-tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state){
-	tip_Snapshot snapshot;
+tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state) {
+	tip_Snapshot snapshot = {};
 	snapshot.clocks_per_second = tip_global_state.clocks_per_second;
 	snapshot.process_id = tip_global_state.process_id;
 	snapshot.names.init(256);
@@ -894,12 +894,10 @@ void tip_free_snapshot(tip_Snapshot snapshot){
 
 
 
-#if defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3) && ! defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER)
+#ifndef TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
 #define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
-#include <vector>
-#include <algorithm>
 namespace tip_file_format_compressed_binary_v3{
-	void export_snapshot(char* file_name, tip_Snapshot snapshot);
+	uint64_t export_snapshot(tip_Snapshot snapshot, char* file_name, tip_Dynamic_Array<uint64_t>* diff_sizes = nullptr);
 	tip_Snapshot import_snapshot(char* file_name);
 
 
@@ -951,7 +949,7 @@ namespace tip_file_format_compressed_binary_v3{
 
 #endif
 
-#if defined(TIP_FILE_FORMAT_COMPRESSED_BINARY_V3) && defined(TIP_IMPLEMENTATION)
+#ifdef TIP_IMPLEMENTATION
 
 namespace tip_file_format_compressed_binary_v3{
 	void serialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size){
@@ -1046,6 +1044,10 @@ namespace tip_file_format_compressed_binary_v3{
 	//the decoder needs the huffman table, to be able to decode the data. So you need to store it along with your encoded data:
 	//call get_conservative_size_estimate_when_serialized to get a conservativethe size you need to reserve for the serialized table itsself
 	//call serialize_table to serialize the table
+	/*
+	#include <vector>
+	#include <algorithm>
+
 	struct Huffman_Encoder{
 		struct Node { 
 			//this is what you are here for: the code is in
@@ -1194,7 +1196,7 @@ namespace tip_file_format_compressed_binary_v3{
 		}
 
 	};
-
+	*/
 	//this is just so you know what buffer size you need when serializing a snapshot. This caculates the size of a serialization that just literaly serialized all the information in the snapshot without doing anything to them + some more to be sure. This is meant to always overestimate, never underestimate.
 	uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
 		return snapshot.thread_ids.size * sizeof(uint32_t) // all the factors that can scale
@@ -1240,7 +1242,7 @@ namespace tip_file_format_compressed_binary_v3{
 	//                if this value is 20, the offset at which to find the first character of this name is the 21st (counted from 1) in the offset_buffer
 
 	tip_Dynamic_Array<uint64_t> get_default_diff_sizes(){
-		uint64_t diff_sizes_buffer[] = {7, 8, 9, 10, 12, 16, 22, 64};
+		uint64_t diff_sizes_buffer[] = {6, 7, 8, 10, 12, 16, 22, 64};
 		uint64_t number_of_diff_sizes = sizeof(diff_sizes_buffer) / sizeof(uint64_t);
 
 		tip_Dynamic_Array<uint64_t> default_diff_sizes;
@@ -1256,9 +1258,9 @@ namespace tip_file_format_compressed_binary_v3{
 		fclose(file);
 	}
 
-	uint64_t export_snaphsot(char* file_name, tip_Snapshot snapshot, tip_Dynamic_Array<uint64_t>* diff_sizes = nullptr){
+	uint64_t export_snapshot(tip_Snapshot snapshot, char* file_name, tip_Dynamic_Array<uint64_t>* diff_sizes){
 		tip_Dynamic_Array<uint64_t> default_diff_sizes; //this variable is here to go out of scope because we use a pointer to that
-		
+
 		((void)file_name);
 		if(!diff_sizes){
 			default_diff_sizes = get_default_diff_sizes();
@@ -1266,9 +1268,11 @@ namespace tip_file_format_compressed_binary_v3{
 		}
 
 		uint64_t buffer_size = get_conservative_size_estimate_for_serialized_snapshot(snapshot);
-		printf("conservative size estimate is %lluB\n", buffer_size);
+		printf("\nSize Max Estimate:       %10.3f KB\n\n", double(buffer_size) / 1024.);
 		char* buffer = (char*)malloc(buffer_size);
 		char* initial_buffer_position = buffer;
+		
+		char* debug_position = buffer;
 
 		{//text header, padding and version
 			char* text_header = "This is the tcb3 file format! (tip compressed binary format version 3)\n";
@@ -1285,9 +1289,13 @@ namespace tip_file_format_compressed_binary_v3{
 		serialize_value_byte_aligned(&buffer, snapshot.clocks_per_second); 
 		serialize_value_byte_aligned(&buffer, snapshot.process_id); 
 		serialize_value_byte_aligned(&buffer, snapshot.number_of_events);
+
+
+		printf("Static Header Part:      %10lld B\n", buffer - debug_position); debug_position = buffer;
+
 		serialize_dynamic_array_byte_aligned(&buffer, snapshot.names.name_buffer);
 		serialize_dynamic_array_byte_aligned(&buffer, snapshot.thread_ids);
-		
+		printf("Name Buffer+Thread Ids:  %10lld B\n", buffer - debug_position); debug_position = buffer;
 
 		tip_Dynamic_Array<uint64_t> name_index_encoding_table;
 		tip_Dynamic_Array<uint64_t> name_index_decoding_table;
@@ -1307,6 +1315,8 @@ namespace tip_file_format_compressed_binary_v3{
 		}
 
 		serialize_dynamic_array_byte_aligned(&buffer, name_index_decoding_table);
+		printf("Decoding Table:          %10lld B\n", buffer - debug_position); debug_position = buffer;
+
 
 		uint64_t substitue_name_index_size = get_number_bits_needed_to_represent_number(name_index_decoding_table.size);
 		uint64_t event_type_size = get_number_bits_needed_to_represent_number(uint64_t(tip_Event_Type::enum_size) - 1);
@@ -1319,11 +1329,19 @@ namespace tip_file_format_compressed_binary_v3{
 		serialize_value_byte_aligned(&buffer, diff_size_index_size);
 		serialize_value_byte_aligned(&buffer, snapshot.names.name_indices.size);
 
+		printf("Auxilliary:              %10lld B\n", buffer - debug_position); debug_position = buffer;
+		printf("Header Total:            %10lld B\n", buffer - initial_buffer_position);
 
+		uint64_t debug_size_event_type = 0;
+		uint64_t debug_size_name_indices = 0;
+		uint64_t debug_size_timestamps = 0;
+		uint64_t debug_size_diff_size = 0;
+
+		/*
 		printf("event type size is %llu bit\n", event_type_size);
 		printf("substitue name index size is %llu bit\n", substitue_name_index_size);
 		printf("diff size index size is %llu bit\n", diff_size_index_size);
-
+	*/
 		uint64_t total_bytes_written = buffer - initial_buffer_position;
 		{
 			uint64_t write_position_in_bits = 0;
@@ -1354,17 +1372,40 @@ namespace tip_file_format_compressed_binary_v3{
 					}
 
 					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &selected_diff_size_index, diff_size_index_size);
+					debug_size_diff_size += diff_size_index_size;
+
 					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &diff, (*diff_sizes)[selected_diff_size_index]);
 					prev_timestamp = event.timestamp;
+					debug_size_timestamps += (*diff_sizes)[selected_diff_size_index];
 
 					serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &event.type, event_type_size);
-					if(event.type != tip_Event_Type::stop) //names of stop events have to be the same as the last start event on the stack
+					debug_size_event_type += event_type_size;
+
+					if(event.type != tip_Event_Type::stop){ //names of stop events have to be the same as the last start event on the stack
 						serialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &name_index_encoding_table[event.name_id], substitue_name_index_size);
+						debug_size_name_indices += substitue_name_index_size;
+					}
 				}
 			}
 
+		printf("\nNumber of Events:        %10llu\n", snapshot.number_of_events);
+		printf("Events Total:            %10llu B\n", write_position_in_bits / 8);
+		printf("Per Event:               %10.3f B\n\n", double(write_position_in_bits) / double(snapshot.number_of_events) / 8.);
 			total_bytes_written += (write_position_in_bits + 7) / 8; //the + 7 effectively rounds up in the integer division
 		}
+
+		printf("debug_size_event_type:   %10llu B\n", debug_size_event_type / 8);
+		printf("debug_size_name_indices: %10llu B\n", debug_size_name_indices / 8);
+		printf("debug_size_timestamps:   %10llu B\n", debug_size_timestamps / 8);
+		printf("debug_size_diff_size:    %10llu B\n\n", debug_size_diff_size / 8);
+
+		printf("Total Size:              %10.3f KB\n", double(total_bytes_written) / 1024.);
+		printf("Total per Event:         %10.3f B\n\n", double(total_bytes_written) / double(snapshot.number_of_events));
+
+
+		printf("Event Type Size:         %10llu b\n", event_type_size);
+		printf("Diff Size Index Size:    %10llu b\n", diff_size_index_size);
+		printf("Name Index Size:         %10llu b\n", substitue_name_index_size);
 
 		assert(total_bytes_written <= buffer_size);
 
@@ -1402,7 +1443,6 @@ namespace tip_file_format_compressed_binary_v3{
 
 		return file_buffer;
 	}
-
 
 	tip_Snapshot import_snaphsot(char* file_name){
 		tip_Snapshot snapshot;
@@ -1459,10 +1499,6 @@ namespace tip_file_format_compressed_binary_v3{
 				name += name_length + 1;
 			}
 		}
-
-		printf("event type size is %llu bit\n", event_type_size);
-		printf("substitue name index size is %llu bit\n", substitue_name_index_size);
-		printf("diff size index size is %llu bit\n", diff_size_index_size);
 
 		uint64_t total_bytes_written = buffer - file_buffer.buffer;
 
