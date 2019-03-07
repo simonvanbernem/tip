@@ -1,7 +1,6 @@
 #define TIP_USE_RDTSC
 #define TIP_WINDOWS
 #define TIP_IMPLEMENTATION
-#define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3
 #include "tip.h"
 
 
@@ -32,7 +31,7 @@ void profile_stuff(){
 }
 
 
-void main(){	
+void main(){
 	tip_global_init();
 	tip_thread_init();
 
@@ -42,8 +41,8 @@ void main(){
 	//tip_export_snapshot_to_chrome_json(snapshot, "json1.snapshot");
 	//tip_export_snapshot_to_compressed_binary(snapshot, "binary.snapshot");
 	//auto snapshot2 = tip_import_snapshot_from_compressed_binary("binary.snapshot");
-	tip_file_format_compressed_binary_v3::export_snapshot(snapshot, "binary.ssss");
-	auto snapshot2 = tip_file_format_compressed_binary_v3::import_snaphsot("binary.ssss");
+	tip_file_format_tcb3::export_snapshot(snapshot, "binary.ssss");
+	auto snapshot2 = tip_file_format_tcb3::import_snapshot("binary.ssss");
 
 
 	assert(snapshot == snapshot2);

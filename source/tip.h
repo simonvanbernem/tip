@@ -332,25 +332,26 @@ static const uint64_t tip_compressed_binary_version = 2;
 	#define TIP_CONCAT_LINE_NUMBER2(x, y) TIP_CONCAT_LINE_NUMBER(x, y) // this just concats "profauto" and the line number
 	#define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_LINE_NUMBER2(profauto, __LINE__)(name); //for id=0 and and line 23, this expands to "tip_Scope_Profiler profauto23(0);"
 
-	#define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::start);
-	#define TIP_PROFILE_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
+	#define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);
+	#define TIP_PROFILE_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop);
 
-	#define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::start_async);
-	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop_async);
+	#define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start_async);
+	#define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop_async);
 
-void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type);
+void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
 uint64_t tip_get_timestamp();
 
 struct tip_Scope_Profiler{
 	const char* name;
-
+	uint64_t length_including_null;
 	tip_Scope_Profiler(const char* event_name){
-		tip_save_profile_event(tip_get_timestamp(), event_name, tip_Event_Type::start);
+		length_including_null = tip_strlen(event_name) + 1;
 		name = event_name;
+		tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::start);
 	}
 
 	~tip_Scope_Profiler(){
-		tip_save_profile_event(tip_get_timestamp(), name, tip_Event_Type::stop);
+		tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::stop);
 	}
 };
 
@@ -588,10 +589,9 @@ void tip_get_new_event_buffer(){
 	tip_thread_state.current_event_buffer = new_buffer;
 }
 
-void tip_save_profile_event(uint64_t timestamp, const char* name, tip_Event_Type type){
+void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
 	assert(tip_thread_state.initialized);
 	
-	uint64_t name_length_including_terminator = tip_strlen(name) + 1;
 	uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 	
 	if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end)
@@ -896,7 +896,7 @@ void tip_free_snapshot(tip_Snapshot snapshot){
 
 #ifndef TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
 #define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
-namespace tip_file_format_compressed_binary_v3{
+namespace tip_file_format_tcb3{
 	uint64_t export_snapshot(tip_Snapshot snapshot, char* file_name, tip_Dynamic_Array<uint64_t>* diff_sizes = nullptr);
 	tip_Snapshot import_snapshot(char* file_name);
 
@@ -951,7 +951,7 @@ namespace tip_file_format_compressed_binary_v3{
 
 #ifdef TIP_IMPLEMENTATION
 
-namespace tip_file_format_compressed_binary_v3{
+namespace tip_file_format_tcb3{
 	void serialize_range_byte_aligned(char** buffer, void* range, uint64_t range_size){
 		memcpy(*buffer, range, range_size);
 		*buffer += range_size;
@@ -1444,7 +1444,7 @@ namespace tip_file_format_compressed_binary_v3{
 		return file_buffer;
 	}
 
-	tip_Snapshot import_snaphsot(char* file_name){
+	tip_Snapshot import_snapshot(char* file_name){
 		tip_Snapshot snapshot;
 		tip_Dynamic_Array<char> file_buffer = read_entire_file(file_name);
 		char* buffer = file_buffer.buffer;
