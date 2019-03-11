@@ -310,11 +310,11 @@ double tip_global_init(); //call this once globally in program, before you inter
 void tip_thread_init(); //call this once on each thread you want to profile on, before you start profiling on that thread and after calling tip_global_init
 
 /*
-	tip_create_snapshot will create a copy of the internal profiler state, containing every profiling event of every thread up to that point. profiling will not be interrupted by calling this function, however any calls to tip_thread_init will block until it has finished. If erase_snapshot_data_from_internal_state is set to true, any data contained in this snapshot will be erased from the internal state. That means that any consequent calls to tip_create_shnapshot will not contain that data.
+	tip_create_snapshot will create a copy of the internal profiler state, containing every profiling event of every thread up to that point. profiling will not be interrupted by calling this function, however any calls to tip_thread_init will block until it has finished. If erase_snapshot_data_from_internal_state is set to true, any data contained in this snapshot will be erased from the internal state. That means that any consequent calls to tip_create_shnapshot will not contain that data. If prohibit_simulatenous_events is set to true, events that have the exact same timestap measured will be spaced apart by one clock cycle. The first event will stay the same, the following will be moved backwards, if necessairy. If the resolution of your clock is REALLY low, this might be a problem. This option exist, because some frontends (like the chrome frontend) get confused by simultaneous events.
 
 	You can pass the returned snapshot to tip_export_snapshot_to_chrom_json to create a file that can be read by the built-in chrome profiling frontend, or alternatively use this information to export to your own format. For details on the snapshot, see tip_Snapshot.
 */ 
-tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false);
+tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false, bool prohibit_simulatenous_events = true);
 
 /*
 	tip_export_snapshot_to_chrome_json will export a snapshot to a file, that can be read by the built-in chrome profiling frontend. You can find the frontend at the url "chrome://tracing" in chrome. 
@@ -669,7 +669,7 @@ double tip_global_init(){
 	return 1. / tip_global_state.clocks_per_second;
 }
 
-tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state) {
+tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simulatenous_events) {
 	tip_Snapshot snapshot = {};
 	snapshot.clocks_per_second = tip_global_state.clocks_per_second;
 	snapshot.process_id = tip_global_state.process_id;
@@ -698,6 +698,14 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state) {
 				data_pointer += sizeof(name_length_including_terminator);
 				event.name_id = snapshot.names.intern_string((char*)data_pointer);
 				data_pointer += name_length_including_terminator;
+
+				if(prohibit_simulatenous_events && thread_events.size > 0){
+					auto previous_timestamp = thread_events[thread_events.size - 1].timestamp;
+					//it can happen that two events have the exact same timestamp, which causes issues for some frontends (like the chrome-frontend for example). We detect here if this is the case, and move the current timestamp 1 clock cycle forward in time. As long as the clock resolution is high enough, this does not distort the measurings in a significant way
+					//we additionally have to check if the current timestamp is smaller than the previous: If 3 or more events have the same timestamp, we would advanced the second one. In this case, the third timestamp would be smaller than the second timestamp, so we have to advance it by 2 clock cycles, and so on.
+					if(event.timestamp <= previous_timestamp)
+						event.timestamp = previous_timestamp + 1;
+				}
 				thread_events.insert(event);
 				snapshot.number_of_events++;
 			}
@@ -781,7 +789,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 		int32_t thread_id = snapshot.thread_ids[thread_index];
 		for(tip_Event event : snapshot.events[thread_index]){
 
-			if(event.type == tip_Event_Type::start) //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
+			//we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
+			if(event.type == tip_Event_Type::start)
 				event_stack.insert(event);
 
 			else if(event.type == tip_Event_Type::stop){ //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
