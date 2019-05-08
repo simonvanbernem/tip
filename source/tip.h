@@ -21,7 +21,7 @@
 // TIP_PROFILE_ASYNC_STOP(name)
 // where name is a string in quotes, e.g.: TIP_PROFILE_SCOPE("setup")
 
-// to export the profiling data in a format that can be openend in "chrome://tracing/" in your chrome browser, call:
+// to export the profiling data in a format that can be opened in "chrome://tracing/" in your chrome browser, call:
 // tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "profiling_run.snapshot");
 // tip is modular, which means you can add your own exporters. tip_create_snapshot() accumulates all the internal state into a package that you can convert to your own format. for more information see the tip_Snapshot struct.
 // tip_export_snapshot_to_chrome_json is such a converter, which converts the snapshot to a json file, readable by "chrome://tracing/" in a chrome browser. Feel free to take a look.
@@ -426,7 +426,10 @@ bool tip_string_is_equal(char* string1, char* string2){
 
 
 #ifdef TIP_WINDOWS
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+
 #include "Windows.h"
 
 struct Mutex{
@@ -670,6 +673,8 @@ double tip_global_init(){
 }
 
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simulatenous_events) {
+	assert(tip_global_state.initialized);
+
 	tip_Snapshot snapshot = {};
 	snapshot.clocks_per_second = tip_global_state.clocks_per_second;
 	snapshot.process_id = tip_global_state.process_id;
@@ -778,6 +783,7 @@ void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* arr
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
 	FILE* file = nullptr;
 	fopen_s(&file, file_name, "w+");
+	assert(file);
 	fprintf(file, "{\"traceEvents\": [\n");
 
 	bool first = true;
