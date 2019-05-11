@@ -322,6 +322,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = 
 	the function returns the size of the created file
 */
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
+uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percentage_of_async_events = 0.01f, uint64_t average_name_length = 10);
 
 static const char* tip_compressed_binary_text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
 static const uint64_t tip_compressed_binary_version = 2;
@@ -374,9 +375,7 @@ uint64_t tip_get_serialized_value_size(T value){
 }
 
 
-#endif //END HEADER
-
-
+#endif //END TIP_HEADER
 
 
 
@@ -780,13 +779,35 @@ void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* arr
 	array->insert('\0');
 }
 
+uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percentage_of_async_events, uint64_t average_name_length){
+	auto async_events = percentage_of_async_events * (float)snapshot.number_of_events;
+	auto non_async_events = (1.f - percentage_of_async_events) * (float)snapshot.number_of_events;
+	auto total_events = async_events + non_async_events / 2; //we can pack a pair of non async begin and end into one event
+	return uint64_t(total_events) * (126 + average_name_length); //126 was measured as the typical length of serialized event (without the name).
+}
+
+template<typename T>
+T tip_min(T v0, T v1){
+	if(v0 < v1)
+		return v0;
+	else
+		return v1;
+}
+
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
 	FILE* file = nullptr;
 	fopen_s(&file, file_name, "w+");
-	assert(file);
 	fprintf(file, "{\"traceEvents\": [\n");
 
 	bool first = true;
+
+	const double e6 = 1000000;
+
+	uint64_t first_timestamp = 18446744073709551615llu; // uint64_t max (a.k.a 2^64 - 1)
+	for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
+		if(snapshot.events[thread_index].size > 0)
+			first_timestamp = tip_min(first_timestamp, snapshot.events[thread_index][0].timestamp);
+	}
 
 	tip_Dynamic_Array<tip_Event> event_stack;
 	tip_Dynamic_Array<char> escaped_name_buffer;
@@ -813,19 +834,21 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 							fprintf(file, ",\n");
 
 						const char* name = snapshot.names.get_string(event.name_id);
-						double timestamp = double(last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
-						double duration = double(event.timestamp - last_event_on_stack.timestamp) / snapshot.clocks_per_second * 1000000.;
+						
+						//the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by e6. Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
+						double timestamp = double(last_event_on_stack.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
+						double duration = double(event.timestamp - last_event_on_stack.timestamp) * (e6 / snapshot.clocks_per_second);
+
 
 						tip_escape_string_for_json(name, &escaped_name_buffer);
 						
 						fprintf(file,"  {\"name\":\"%s\","
-										"\"cat\":\"PERF\","
+										// "\"cat\":\"PERF\","
 										"\"ph\":\"X\","
 										"\"pid\":%d,"
 										"\"tid\":%d,"
-										"\"id\":100,"
-										"\"ts\":%.16e,"
-										"\"dur\":%.16e}", escaped_name_buffer.buffer, snapshot.process_id, thread_id, timestamp, duration);
+										"\"ts\":%.3f,"
+										"\"dur\":%.3f}", escaped_name_buffer.buffer, snapshot.process_id, thread_id, timestamp, duration);
 					}
 					else{
 						event_stack.insert(event);
@@ -833,7 +856,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 				}
 			}
 			else{    //the only type of events left are the asynchronous ones. we just print these directly
-				double timestamp = double(event.timestamp) / snapshot.clocks_per_second * 1000000.;
+				double timestamp = double(event.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
 				const char* name = snapshot.names.get_string(event.name_id);
 				tip_escape_string_for_json(name, &escaped_name_buffer);
 
@@ -849,17 +872,16 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 					fprintf(file, ",\n");
 
 				fprintf(file,"  {\"name\":\"%s\","
-								"\"cat\":\"PERF\","
+								// "\"cat\":\"PERF\","
 								"\"ph\":\"%c\","
 								"\"pid\":%d,"
 								"\"tid\":%d,"
-								"\"id\":100,"
-								"\"ts\":%.16e}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
+								"\"ts\":%.3f}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
 			}
 		}
 
 		for(tip_Event event : event_stack){ //print all start and stop events, that don't have a corresponding event they could form a duration event with
-			double timestamp = double(event.timestamp) / snapshot.clocks_per_second * 1000000.;
+			double timestamp = double(event.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
 			const char* name = snapshot.names.get_string(event.name_id);
 			tip_escape_string_for_json(name, &escaped_name_buffer);
 			char type = '!';
@@ -874,12 +896,11 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 				fprintf(file, ",\n");
 
 			fprintf(file,"  {\"name\":\"%s\","
-							"\"cat\":\"PERF\","
+							// "\"cat\":\"PERF\","
 							"\"ph\":\"%c\","
 							"\"pid\":%d,"
 							"\"tid\":%d,"
-							"\"id\":100,"
-							"\"ts\":%.16e}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
+							"\"ts\":%.3f}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
 		}
 
 		event_stack.clear();
@@ -1580,7 +1601,4 @@ namespace tip_file_format_tcb3{
 	}
 
 }
-
-
-
 #endif
