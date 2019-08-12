@@ -89,8 +89,15 @@ void main(){
 #define TIP_ASSERT assert
 #endif
 
+#ifndef TIP_MALLOC
+#define TIP_MALLOC malloc
+#endif
+
+#ifndef TIP_FREE
+#define TIP_FREE free
+#endif
+
 #include <stdint.h>
-#include <stdlib.h>
 #ifndef tip_event_buffer_size
 #define tip_event_buffer_size 1024 * 1024
 #endif
@@ -105,7 +112,7 @@ struct tip_Dynamic_Array{
   uint64_t capacity = 0;
 
   void init(uint64_t initial_capacity){
-    buffer = (T*) malloc(sizeof(T) * initial_capacity);
+    buffer = (T*) TIP_MALLOC(sizeof(T) * initial_capacity);
     capacity = initial_capacity;
     size = 0;
   }
@@ -166,7 +173,7 @@ struct tip_Dynamic_Array{
   }
 
   void destroy(){
-    free(buffer);
+    TIP_FREE(buffer);
     buffer = nullptr;
     size = 0;
     capacity = 0;
@@ -627,8 +634,8 @@ bool tip_get_global_toggle() {
 }
 
 void tip_get_new_event_buffer(){
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) malloc(sizeof(tip_Event_Buffer));
-  new_buffer->data = (uint8_t*) malloc(tip_event_buffer_size);
+  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
+  new_buffer->data = (uint8_t*) TIP_MALLOC(tip_event_buffer_size);
   new_buffer->end = new_buffer->data + tip_event_buffer_size;
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
@@ -676,9 +683,9 @@ void tip_thread_init(){
 
   tip_thread_state.thread_id = tip_get_thread_id();
 
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) malloc(sizeof(tip_Event_Buffer));
+  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
 
-  new_buffer->data =(uint8_t*) malloc(tip_event_buffer_size);
+  new_buffer->data =(uint8_t*) TIP_MALLOC(tip_event_buffer_size);
   new_buffer->end = new_buffer->data + tip_event_buffer_size;
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
@@ -775,8 +782,8 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
         }
         else{
           tip_Event_Buffer* next_buffer = event_buffer->next_buffer;
-          free(event_buffer->data);
-          free(event_buffer);
+          TIP_FREE(event_buffer->data);
+          TIP_FREE(event_buffer);
           thread_state->first_event_buffer = next_buffer;
           event_buffer = next_buffer;
         }
@@ -1197,7 +1204,7 @@ TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snap
 
     uint64_t buffer_size = get_conservative_size_estimate_for_serialized_snapshot(snapshot);
     printf("\nSize Max Estimate:       %10.3f KB\n\n", double(buffer_size) / 1024.);
-    char* buffer = (char*)malloc(buffer_size);
+    char* buffer = (char*)TIP_MALLOC(buffer_size);
     char* initial_buffer_position = buffer;
     
     char* debug_position = buffer;
@@ -1349,7 +1356,7 @@ TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snap
       write_entire_file(file_name, file_buffer);
     }
     
-    free(initial_buffer_position);
+    TIP_FREE(initial_buffer_position);
     return total_bytes_written;
   }
 
@@ -1362,7 +1369,7 @@ TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snap
     uint64_t file_size = ftell(file); 
     rewind(file);
 
-    file_buffer.buffer = (char*)malloc(file_size);
+    file_buffer.buffer = (char*)TIP_MALLOC(file_size);
     file_buffer.size = file_size;
     file_buffer.capacity = file_size;
 
