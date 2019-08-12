@@ -1,85 +1,26 @@
 //tip is licensed under the MIT License. The full license agreement can be found at the end of this file.
 
-//flags you can set:
-// #define TIP_USE_RDTSC
-// #define TIP_WINDOWS
-
-// if you do not define TIP_WINDOWS, TIP will use the C++ <chrono> header for timing, which (apparently) pulls in some code that needs exceptions enabled to compile. So you may get the "enable -EHsc" error when you have them turned off!
-
-// use
-// #define TIP_IMPLEMENTATION
-// to generate the implementation.
-
-
-// before you can profile:
-// call tip_global_init() once for your entire program, before you call anything else in tip
-// call tip_thread_init() after tip_global_init() in each thread you want to profile before you call anything else in tip
-
-// profiling commands:
-// TIP_PROFILE_SCOPE(name)
-// TIP_PROFILE_START(name)
-// TIP_PROFILE_STOP(name)
-// TIP_PROFILE_ASYNC_START(name)
-// TIP_PROFILE_ASYNC_STOP(name)
-// where name is a string in quotes, e.g.: TIP_PROFILE_SCOPE("setup")
-
-// to export the profiling data in a format that can be opened in "chrome://tracing/" in your chrome browser, call:
-// tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "profiling_run.snapshot");
-// tip is modular, which means you can add your own exporters. tip_create_snapshot() accumulates all the internal state into a package that you can convert to your own format. for more information see the tip_Snapshot struct.
-// tip_export_snapshot_to_chrome_json is such a converter, which converts the snapshot to a json file, readable by "chrome://tracing/" in a chrome browser. Feel free to take a look.
+// USAGE
+//
+// Include this file in whatever places need to refer to it. In ONE C/C++ file, write:
+// #define STB_TRUETYPE_IMPLEMENTATION
+// before the #include of this file. This expands out the actual implementation into that C/C++ file.
+//
+//
 
 
 
-//single thread simple example:
-
-// #include <stdio.h>
-// void main(){
-//     tip_global_init();
-//     tip_thread_init();
-// 
-//     TIP_PROFILE_START("for loop");
-//     for(int i = 0; i < 1000; i++){
-//         TIP_PROFILE_SCOPE("iteration");
-//         printf("doing my work #%d", i);
-//     }
-//     TIP_PROFILE_STOP("for loop");
-// 
-//     tip_export_snapshot_to_chrome_json(tip_create_snapshot(), "profiling_run.snapshot");
-// }
+//------------------------------------------------------------------------------
+//----------------------------------@EXAMPLES-----------------------------------
+//------------------------------------------------------------------------------
 
 
-/*
-#include <stdio.h>
 
-void new_thread_main(int thread_index){
-  tip_thread_init();
-  char buffer[20];
-  printf("thread %d started", thread_index);
-
-  for(int job_index = 0; job_index < 6; job_index++){
-    sprintf(buffer, "job #%d", thread_index);
-    TIP_PROFILE_START(buffer); //we can't use TIP_PROFILE_SCOPE here, since it would be executed before the sprintf
-
-    printf("doing job %d", job_index);
-
-    TIP_PROFILE_STOP(buffer);
-  }
-
-  sprintf(buffer, "thread #%d", thread_index);
-  TIP_PROFILE_ASYNC_STOP(buffer);
-}
-
-void main(){
-  for(int i = 0; i < 10; i++){
-    
-  }
-
-}
-
-*/
 #ifndef TIP_HEADER
 #define TIP_HEADER
 
+
+// You can define any of these macros to integrate TIP into your codebase. Use TIP_API to define function prefixes for dll export/import.
 #ifndef TIP_API
 #define TIP_API
 #endif
@@ -97,13 +38,19 @@ void main(){
 #define TIP_FREE free
 #endif
 
-#include <stdint.h>
-#ifndef tip_event_buffer_size
-#define tip_event_buffer_size 1024 * 1024
+#ifndef TIP_EVENT_BUFFER_SIZE
+#define TIP_EVENT_BUFFER_SIZE 1024 * 1024
 #endif
 
+#include <stdint.h>
+
+
+// used internally
 TIP_API uint32_t tip_strlen(const char* string);
 TIP_API bool tip_string_is_equal(char* string1, char* string2);
+
+#define TIP_CONCAT_STRINGS_HELPER(x, y) x ## y
+#define TIP_CONCAT_STRINGS(x, y) TIP_CONCAT_STRINGS_HELPER(x, y) // this concats x and y. Why you need two macros for this in C++, I do not know.
 
 template<typename T>
 struct tip_Dynamic_Array{
@@ -308,25 +255,162 @@ struct tip_Snapshot{
   tip_Dynamic_Array<tip_Dynamic_Array<tip_Event>> events; // the inner array contains the events of one thread.
 };
 
-TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
+//------------------------------------------------------------------------------
+//------------------------------@API DOCUMENTATION------------------------------
+//------------------------------------------------------------------------------
 
-TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
+//------------------------------------------------------------------------------
+// State initialization: TIP keeps global and thread local state to record
+// profiling events. This state needs to be intialized. The usual way this
+// happens is by first calling tip_global_init ONCE on application startup,
+// and then call tip_thread_init once in each thread that you want to profile.
+// 
+// If you don't have control over thread-creation or programm startup, or simply
+// don't want to be bothered by this, you can define TIP_AUTO_INIT. If you do
+// this, initialization will be automatically taken care of. Note that this
+// incurs a runtime cost (if-check on recording a profiling event)
+
 TIP_API double tip_global_init();
-TIP_API void tip_thread_init();
-TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false, bool prohibit_simulatenous_events = true);
-TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
-TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percentage_of_async_events = 0.01f, uint64_t average_name_length = 10);
+// Initializes the global state of TIP and should be called before any other
+// function, once. If the global state was already initialized, this function
+// does nothing. If TIP_AUTO_INIT is defined, there is no need to call this
+// fuction.
 
+TIP_API void tip_thread_init();
+// Initializes the thread-local state of TIP and should be called after
+// tip_global_init but before attempting to record profiling events in that
+// thread, once. If the thread-local state was already initialized, this
+// function does nothing. If TIP_AUTO_INIT is defined, there is no need to
+// call this fuction.
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Global toggle: if TIP_TOGGLE_PROFILING_GLOBALLY is defined, a bool will be
+// added to the global state, that controls whether profiling events are
+// recorded. The toggle starts deactivated (false), so no profiling events will
+// be recorded until it is activated. This can be usefull if you only want to
+// profile parts of your application, or to deactivated profiling before you had
+// the chance to initialize TIP's global and thread state. Note that setting and
+// querying the global toggle is valid BEFORE calling tip_global_init.
 
 TIP_API void tip_set_global_toggle(bool toggle);
-TIP_API bool tip_get_global_toggle();
+// If TIP_TOGGLE_PROFILING_GLOBALLY is defined, this function sets the state
+// global toggle. Otherwise, this function does nothing.
+// The global state need not be initialized to set the global toggle.
 
-#define TIP_CONCAT_STRINGS_HELPER(x, y) x ## y
-#define TIP_CONCAT_STRINGS(x, y) TIP_CONCAT_STRINGS_HELPER(x, y) // this concats x and y. Why you need two macros for this in C++, I do not know.
+TIP_API bool tip_get_global_toggle();
+// If TIP_TOGGLE_PROFILING_GLOBALLY is defined, this function returns the
+// current state of the global toggle. Otherwise, this function return true.
+// The global state need not be initialized to query the global toggle.
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Profiling macros: These macros are used to actually record the profiling
+// data. Use them to mark sections that you want profile. If
+// TIP_TOGGLE_PROFILING_GLOBALLY is defined, and the global toggle is disable,
+// these macros do nothing.
+// 
+// Every once in a while, a call to these macros will
+// take much longer than usual, because TIP has to allocate a new buffer to
+// store the profiling information in. This will distort the accuracy of the
+// data, and you may consider increasing TIP_EVENT_BUFFER_SIZE, so fewer, bigger
+// buffers will be allocated. Buffer usage increases with more profiling events
+// and longer event names.
+// 
+// Most macros take a name argument. This name is used for display in frontends
+// and to match openening and closing profiling sections.
+
+// The following macros are available:
+// 
+// Scoped Profilers:
+// 
+// TIP_PROFILE_SCOPE(name)
+// Opens a profiling section in its constructor and closes it in it's destructor.
+// 
+// TIP_PROFILE_SCOPE_COND(name, condition)
+// Opens a profiling section in its constructor and closes it in it's destructor
+// if condition evaluates to true
+// 
+// TIP_PROFILE_FUNCTION()
+// Opens a profiling section in its constructor and closes it in it's destructor.
+// Uses the name of the enclosing function.
+// 
+// 
+// Manual profilers:
+// 
+// TIP_PROFILE_START(name)
+// Opens a profiling section-
+// Use this in conjunction with TIP_PROFILE_STOP (match the names).
+// 
+// TIP_PROFILE_STOP(name)
+// Closes a profiling section.
+// Use this in conjunction with TIP_PROFILE_START (match the names).
+// 
+// 
+// Async profilers:
+// 
+// TIP_PROFILE_ASYNC_START(name)
+// Opens an async profiling section.
+// Use this in conjunction with TIP_PROFILE_ASYNC_STOP (match the names).
+// 
+// TIP_PROFILE_ASYNC_STOP(name)
+// Closes an async profiling section.
+// Use this in conjunction with TIP_PROFILE_ASYNC_START (match the names).
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Snapshots: TIP uses a binary interchange format for storing profiling event
+// information called a "snapshot", to allow for easier implementation changes,
+// creation of custom exporters and conversion between file formats.
+// 
+// A snapshot can be created from the internal state of the profiler, and
+// contains all information in a condensed and easy to process form. It is its
+// own seperate copy, and is independent of the profiler state.
+
+TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false, bool prohibit_simultaneous_events = true);
+// Creates a snapshot from of all profiling events recorded up to that point. A
+// snapshot contains all the profiling information in a compact format, that can
+// be output to a file.
+// 
+// If erase_snapshot_data_from_internal_state is true, all profiling events that
+// are part of the snapshot will be erased from the internal state. That means
+// that subsequent calls to tip_create_snapshot will not include these events,
+// and memory for these events will be released if possible.
+// 
+// If prohibit_simultaneous_events is true, profiling events that happend on the
+// same clock-cycle will be spread out to subsequent clock cycles in the
+// snapshot. This can prevent issues when visualizing the data in a frontend.
+// 
+// (Events happen on the same cycle may happen more often than you think, since
+// most clocks I've observed report a much higher resolution than they actually
+// have)
+
+TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
+// Frees the memory of a snapshot
+
+TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
+// Compares two snapshot for equality
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Exporting: Once a Snapshot is made, it can be exported to a file format.
+// Currently, the only output format besides an experimental binary compressed
+// format is a JSON-format that can be read by the chrome profiling frontend.
+
+TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name);
+// Outputs the a given snapshot to a file, that can be read by the chrome
+// profiling-frontend. To use the chrome profiling frontend, navigate to the URL
+// "chrome://tracing" in a chrome browser.
+
+TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percentage_of_async_events = 0.01f, uint64_t average_name_length = 10);
+// Calculates a size estimate of the json file, that would be generated by
+// tip_export_snapshot_to_chrome_json for a given snapshot.
+//------------------------------------------------------------------------------
+
 
 #ifndef TIP_TOGGLE_PROFILING_GLOBALLY
-  // for TIP_PROFILE_SCOPE("test") on line 201, this will generate: tip_Scope_Profiler profauto201("test");
-  #define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name);
+  #define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test");
+  #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, condition);
   #define TIP_PROFILE_FUNCTION() tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__);
 
   #define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);
@@ -336,6 +420,7 @@ TIP_API bool tip_get_global_toggle();
   #define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop_async);
 #else
   #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle());
+  #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, tip_get_global_toggle() && condition);
   #define TIP_PROFILE_FUNCTION() tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(__FUNCTION__, tip_get_global_toggle());
 
   #define TIP_PROFILE_START(name) {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);}
@@ -631,8 +716,8 @@ bool tip_get_global_toggle() {
 
 void tip_get_new_event_buffer(){
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
-  new_buffer->data = (uint8_t*) TIP_MALLOC(tip_event_buffer_size);
-  new_buffer->end = new_buffer->data + tip_event_buffer_size;
+  new_buffer->data = (uint8_t*) TIP_MALLOC(TIP_EVENT_BUFFER_SIZE);
+  new_buffer->end = new_buffer->data + TIP_EVENT_BUFFER_SIZE;
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
   new_buffer->next_buffer = nullptr;
@@ -687,8 +772,8 @@ void tip_thread_init(){
 
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
 
-  new_buffer->data =(uint8_t*) TIP_MALLOC(tip_event_buffer_size);
-  new_buffer->end = new_buffer->data + tip_event_buffer_size;
+  new_buffer->data =(uint8_t*) TIP_MALLOC(TIP_EVENT_BUFFER_SIZE);
+  new_buffer->end = new_buffer->data + TIP_EVENT_BUFFER_SIZE;
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
   new_buffer->next_buffer = nullptr;
@@ -734,7 +819,7 @@ double tip_global_init(){
   return 1. / tip_global_state.clocks_per_second;
 }
 
-tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simulatenous_events) {
+tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simultaneous_events) {
   assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
 
   tip_Snapshot snapshot = {};
@@ -766,9 +851,9 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
         event.name_id = snapshot.names.intern_string((char*)data_pointer);
         data_pointer += name_length_including_terminator;
 
-        if(prohibit_simulatenous_events && thread_events.size > 0){
+        if(prohibit_simultaneous_events && thread_events.size > 0){
           auto previous_timestamp = thread_events[thread_events.size - 1].timestamp;
-          //it can happen that two events have the exact same timestamp, which causes issues for some frontends (like the chrome-frontend for example). We detect here if this is the case, and move the current timestamp 1 clock cycle forward in time. As long as the clock resolution is high enough, this does not distort the measurings in a significant way
+          //it can happen that two events have the exact same timestamp, which can cause issues for a frontend (like the chrome-frontend for example). We detect here if this is the case, and delay the current timestamp by 1 clock cycle in time. As long as the clock resolution is high enough, this does not distort the measurings in a significant way
           //we additionally have to check if the current timestamp is smaller than the previous: If 3 or more events have the same timestamp, we would advanced the second one. In this case, the third timestamp would be smaller than the second timestamp, so we have to advance it by 2 clock cycles, and so on.
           if(event.timestamp <= previous_timestamp)
             event.timestamp = previous_timestamp + 1;
