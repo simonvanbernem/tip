@@ -321,10 +321,6 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 TIP_API void tip_set_global_toggle(bool toggle);
 TIP_API bool tip_get_global_toggle();
 
-static const char* tip_compressed_binary_text_header = "This is the compressed binary format v2 of tip (tiny instrumented profiler).\nYou can read it into a snapshot using the \"tip_export_snapshot_to_compressed_binary\" function in tip.\n";
-static const uint64_t tip_compressed_binary_version = 2;
-
-
 #define TIP_CONCAT_STRINGS_HELPER(x, y) x ## y
 #define TIP_CONCAT_STRINGS(x, y) TIP_CONCAT_STRINGS_HELPER(x, y) // this concats x and y. Why you need two macros for this in C++, I do not know.
 
@@ -645,15 +641,21 @@ void tip_get_new_event_buffer(){
   tip_thread_state.current_event_buffer = new_buffer;
 }
 
+void assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
+  #ifdef TIP_AUTO_INIT
+    if(!tip_thread_state.initialized){
+      if(!tip_global_state.initialized){
+        tip_global_init();
+      }
+      tip_thread_init();
+    }
+  #else
+    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_TOGGLE_PROFILING_GLOBALLY and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
+  #endif
+}
+
 void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
-#ifdef TIP_AUTO_INIT_THREADS
-  if(!tip_thread_state.initialized){
-    TIP_ASSERT(tip_global_state.initialized);
-    tip_thread_init();
-  }
-#else
-  TIP_ASSERT(tip_thread_state.initialized);
-#endif
+  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
 
   uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 
@@ -676,7 +678,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 }
 
 void tip_thread_init(){
-  TIP_ASSERT(tip_global_state.initialized);
+  TIP_ASSERT(tip_thread_state.initialized && "tip_thread_init was called, before the global state was initialized! To get rid of this error, you can either 1( call tip_global_init before this function, or 2) #define TIP_AUTO_INIT, which whill automatically take care fo state initialization. Solution 2) incurs runtime cost (an if-check per profiling event), solution 1) does not.");
 
   if(tip_thread_state.initialized)
     return;
@@ -717,7 +719,7 @@ double tip_global_init(){
   int64_t rdtsc_diff = rdtsc_end - rdtsc_start;
   int64_t reliable_diff = reliable_end - reliable_start;
 
-  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0);
+  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0 && "We got a zero or negative time interval on trying to determin the frequency of RDTSC");
 
   double time_passed = double(reliable_diff) / double(tip_get_reliable_timestamp_frequency());
   tip_global_state.clocks_per_second = rdtsc_diff / time_passed;
@@ -733,7 +735,7 @@ double tip_global_init(){
 }
 
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simulatenous_events) {
-  TIP_ASSERT(tip_global_state.initialized);
+  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
 
   tip_Snapshot snapshot = {};
   snapshot.clocks_per_second = tip_global_state.clocks_per_second;
@@ -800,7 +802,6 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
   return snapshot;
 }
 
-
 void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* array){
   array->clear();
   for(int i = 0; string[i]; i++){
@@ -819,19 +820,19 @@ void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* arr
         break;
       case '\"':
         array->insert('\\');
-        array->insert('\"');
+        array->insert('"');
         break;
       case '\r':
         array->insert('\\');
-        array->insert('\r');
+        array->insert('r');
         break;
       case '\b':
         array->insert('\\');
-        array->insert('\b');
+        array->insert('b');
         break;
       case '\f':
         array->insert('\\');
-        array->insert('\f');
+        array->insert('f');
         break;
       default:
         array->insert(string[i]);
@@ -986,10 +987,7 @@ void tip_free_snapshot(tip_Snapshot snapshot){
 
 #endif //TIP_IMPLEMENTATION
 
-
-
-
-
+#ifdef TIP_INCLUDE_EXPERIMENTAL_TCB3
 
 #ifndef TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
 #define TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
@@ -1044,7 +1042,7 @@ namespace tip_file_format_tcb3{
   }
 }
 
-#endif
+#endif //TIP_FILE_FORMAT_COMPRESSED_BINARY_V3_HEADER
 
 #ifdef TIP_IMPLEMENTATION
 
@@ -1072,8 +1070,6 @@ namespace tip_file_format_tcb3{
     return number_of_bits;
 
   }
-
-  
 
   //this writes number_of_bits_to_write bits from data to buffer. The write is offset by write_position_in_bits bits
   //the return value is the first bit in buffer after the written data
@@ -1133,7 +1129,7 @@ namespace tip_file_format_tcb3{
 
 
 //this is just so you know what buffer size you need when serializing a snapshot. This caculates the size of a serialization that just literaly serialized all the information in the snapshot without doing anything to them + some more to be sure. This is meant to always overestimate, never underestimate.
-TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
+  uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
     return snapshot.thread_ids.size * sizeof(uint32_t) // all the factors that can scale
          + snapshot.names.name_buffer.size * sizeof(char)
          + snapshot.names.name_indices.size * sizeof(uint64_t)
@@ -1500,7 +1496,9 @@ TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snap
   }
 
 }
-#endif
+#endif //TIP_IMPLEMENTATION
+#endif //TIP_INCLUDE_EXPERIMENTAL_TCB3
+
 
 
 

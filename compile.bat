@@ -7,6 +7,6 @@ set compiler_flags=/I "..\source" -nologo -Od -Z7 -W4 -Ddebug -utf-8 -EHsc
 
 cl %compiler_flags%  ../source/test.cpp
 
-cl %compiler_flags% ../source/tcb_converter.cpp
+rem cl %compiler_flags% ../source/tcb_converter.cpp
 
 popd
