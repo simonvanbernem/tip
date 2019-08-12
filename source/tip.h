@@ -678,7 +678,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 }
 
 void tip_thread_init(){
-  TIP_ASSERT(tip_thread_state.initialized && "tip_thread_init was called, before the global state was initialized! To get rid of this error, you can either 1( call tip_global_init before this function, or 2) #define TIP_AUTO_INIT, which whill automatically take care fo state initialization. Solution 2) incurs runtime cost (an if-check per profiling event), solution 1) does not.");
+  TIP_ASSERT(tip_global_state.initialized && "tip_thread_init was called, before the global state was initialized! To get rid of this error, you can either 1) call tip_global_init before this function, or 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization. Solution 2) incurs runtime cost (an if-check per profiling event), solution 1) does not.");
 
   if(tip_thread_state.initialized)
     return;
