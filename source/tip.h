@@ -84,8 +84,12 @@ void main(){
 #define TIP_API
 #endif
 
-#include <stdint.h>
+#ifndef TIP_ASSERT
 #include <assert.h>
+#define TIP_ASSERT assert
+#endif
+
+#include <stdint.h>
 #include <stdlib.h>
 #ifndef tip_event_buffer_size
 #define tip_event_buffer_size 1024 * 1024
@@ -314,7 +318,6 @@ static const char* tip_compressed_binary_text_header = "This is the compressed b
 static const uint64_t tip_compressed_binary_version = 2;
 
 
-
 #define TIP_CONCAT_STRINGS_HELPER(x, y) x ## y
 #define TIP_CONCAT_STRINGS(x, y) TIP_CONCAT_STRINGS_HELPER(x, y) // this concats x and y. Why you need two macros for this in C++, I do not know.
 
@@ -329,7 +332,7 @@ static const uint64_t tip_compressed_binary_version = 2;
   #define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start_async);
   #define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop_async);
 #else
-  #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle()); //for id=0 and and line 23, this expands to "tip_Scope_Profiler profauto23(0);"
+  #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle());
   #define TIP_PROFILE_FUNCTION() tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(__FUNCTION__, tip_get_global_toggle());
 
   #define TIP_PROFILE_START(name) {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);}
@@ -610,7 +613,9 @@ static tip_Global_State tip_global_state;
 void tip_set_global_toggle(bool toggle) {
 #ifdef TIP_TOGGLE_PROFILING_GLOBALLY
   tip_global_state.toggle = toggle;
-#endif 
+#else
+  (void) toggle;
+#endif
 }
 
 bool tip_get_global_toggle() {
@@ -636,15 +641,15 @@ void tip_get_new_event_buffer(){
 void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
 #ifdef TIP_AUTO_INIT_THREADS
   if(!tip_thread_state.initialized){
-    assert(tip_global_state.initialized);
+    TIP_ASSERT(tip_global_state.initialized);
     tip_thread_init();
   }
 #else
-  assert(tip_thread_state.initialized);
+  TIP_ASSERT(tip_thread_state.initialized);
 #endif
 
   uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
-  
+
   if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end)
     tip_get_new_event_buffer();
 
@@ -664,7 +669,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 }
 
 void tip_thread_init(){
-  assert(tip_global_state.initialized);
+  TIP_ASSERT(tip_global_state.initialized);
 
   if(tip_thread_state.initialized)
     return;
@@ -705,7 +710,7 @@ double tip_global_init(){
   int64_t rdtsc_diff = rdtsc_end - rdtsc_start;
   int64_t reliable_diff = reliable_end - reliable_start;
 
-  assert(rdtsc_diff > 0 && reliable_diff > 0);
+  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0);
 
   double time_passed = double(reliable_diff) / double(tip_get_reliable_timestamp_frequency());
   tip_global_state.clocks_per_second = rdtsc_diff / time_passed;
@@ -721,7 +726,7 @@ double tip_global_init(){
 }
 
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simulatenous_events) {
-  assert(tip_global_state.initialized);
+  TIP_ASSERT(tip_global_state.initialized);
 
   tip_Snapshot snapshot = {};
   snapshot.clocks_per_second = tip_global_state.clocks_per_second;
@@ -1120,170 +1125,8 @@ namespace tip_file_format_tcb3{
   }
 
 
-
-  //usage:
-  //call setup once before you use the encoder
-  //call count_value on every byte of the data you want to encode
-  //call create_encoder_data
-  //you can now call encode_value to get the code and length of that code in bits for each byte of data you want to encode
-  //the decoder needs the huffman table, to be able to decode the data. So you need to store it along with your encoded data:
-  //call get_conservative_size_estimate_when_serialized to get a conservativethe size you need to reserve for the serialized table itsself
-  //call serialize_table to serialize the table
-  /*
-  #include <vector>
-  #include <algorithm>
-
-  struct Huffman_Encoder{
-    struct Node { 
-      //this is what you are here for: the code is in
-      bool is_right_child = false;
-      unsigned occurences;
-      unsigned depth = 0;
-      Node *left = nullptr, *right = nullptr, *previous = nullptr; 
-    };
-
-    Node nodes[256];
-
-    void setup(){
-      for(int i = 0; i < 256; i++){
-        nodes[i] = {};
-      }
-    }
-
-    //https://stackoverflow.com/questions/759707/efficient-way-of-storing-huffman-tree
-
-
-    void count_value(char* memory){
-      nodes[*reinterpret_cast<unsigned char*>(memory)].occurences++;
-    }
-
-    struct Heap_Comparison_Struct{ 
-      bool operator()(const Node* lhs, const Node* rhs) const{ 
-        return lhs->occurences > rhs->occurences; 
-      }
-    };
-
-
-    std::vector<Node*> internal_nodes;
-    Node* root_node = nullptr;
-
-    unsigned assign_depths(unsigned depth, Node* node){
-      node->depth = depth;
-      if(!node->left || !node->right)
-        return depth;
-
-      unsigned left_tree_depth = assign_depths(depth + 1, node->left);
-      unsigned right_tree_depth = assign_depths(depth + 1, node->right);
-      
-      return (left_tree_depth > right_tree_depth) ? left_tree_depth : right_tree_depth;
-    }
-
-    void create_encoder_data(){
-      std::vector<Node*> heap;
-      for(int i = 0; i < 256; i++){
-        heap.push_back(nodes + i);
-      }
-      std::make_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
-
-      //we get rid of all nodes for values that didn't appear in the data to compress. That way the serialized tree will be smaller
-      while(true){
-        std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
-        
-        auto smallest = heap.back();
-        if(smallest->occurences != 0)
-          break;
-
-        heap.pop_back();
-      }
-
-      assert(heap.size() > 1);
-
-      while(!heap.empty()){
-        std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
-        auto smallest = heap.back();
-        heap.pop_back();
-
-        std::pop_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
-        auto second_smallest = heap.back();
-        heap.pop_back();
-
-        Node* new_internal_node = new Node();
-        new_internal_node->occurences = smallest->occurences + second_smallest->occurences;
-        
-        new_internal_node->left = smallest;
-        smallest->previous = new_internal_node;
-        smallest->is_right_child = false;
-
-        new_internal_node->right = second_smallest;
-        second_smallest->previous = new_internal_node;
-        second_smallest->is_right_child = true;
-
-        root_node = new_internal_node;
-        internal_nodes.push_back(new_internal_node);
-        
-        if (heap.empty())
-          break;
-
-        heap.push_back(new_internal_node);
-        std::push_heap(heap.begin(), heap.end(), Heap_Comparison_Struct());
-      }
-
-      printf("max code length is %d", int(assign_depths(0, root_node)));
-    }
-
-    uint64_t serialize_encoded_value(char* buffer, uint64_t write_position_in_bits, char* value){
-      Node* node = &nodes[*reinterpret_cast<unsigned char*>(value)];
-      unsigned total_code_length = node->depth;
-
-      while(node->depth > 0){
-        write_bits_into_buffer(buffer, write_position_in_bits + node->depth - 1, &node->is_right_child, 1);
-        node = node->previous;
-      }
-
-      return write_position_in_bits + total_code_length;
-    }
-
-    uint64_t get_serialized_size_for_subtree(Node* node){
-      if(!(node->left || node->right))
-        return 1 + 8; //1 bit for saving that this is a leaf node, 8 bit for storing the original data value
-      else
-        return 1 + get_serialized_size_for_subtree(node->left) + get_serialized_size_for_subtree(node->right);  
-    }
-
-    uint64_t get_table_size_when_serialized(){
-      return get_serialized_size_for_subtree(root_node) + sizeof(uint64_t);
-    }
-
-    uint64_t serialize_subtree(char* buffer, uint64_t write_position_in_bits, Node* node){
-      if(node->left && node->right){
-        bool value_to_write = 0;
-        write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &value_to_write, 1);
-        write_position_in_bits = serialize_subtree(buffer, write_position_in_bits, node->left);
-        return serialize_subtree(buffer, write_position_in_bits, node->left);
-      }
-
-      bool value_to_write = 1;
-      write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &value_to_write, 1);
-      unsigned char value = (unsigned char)(node - nodes); //leaf nodes are in the node array. their index is the value of the data byte they encode. So we just need to subtract their address from the base address of the array to get their index and in turn their value
-      return write_bits_into_buffer(buffer, write_position_in_bits, &value, sizeof(value));
-    }
-
-    uint64_t serialize_table(char* buffer, uint64_t write_position_in_bits){
-      uint64_t table_size = get_table_size_when_serialized();
-      write_position_in_bits = write_bits_into_buffer(buffer, write_position_in_bits, &table_size, sizeof(table_size));
-      write_position_in_bits = serialize_subtree(buffer, write_position_in_bits, root_node);
-    }
-
-    void destroy(){
-      for(auto internal_node : internal_nodes){
-        delete internal_node;
-      }
-    }
-
-  };
-  */
-  //this is just so you know what buffer size you need when serializing a snapshot. This caculates the size of a serialization that just literaly serialized all the information in the snapshot without doing anything to them + some more to be sure. This is meant to always overestimate, never underestimate.
-  uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
+//this is just so you know what buffer size you need when serializing a snapshot. This caculates the size of a serialization that just literaly serialized all the information in the snapshot without doing anything to them + some more to be sure. This is meant to always overestimate, never underestimate.
+TIP_API uint64_t get_conservative_size_estimate_for_serialized_snapshot(tip_Snapshot snapshot){
     return snapshot.thread_ids.size * sizeof(uint32_t) // all the factors that can scale
          + snapshot.names.name_buffer.size * sizeof(char)
          + snapshot.names.name_indices.size * sizeof(uint64_t)
@@ -1362,7 +1205,7 @@ namespace tip_file_format_tcb3{
     {//text header, padding and version
       char* text_header = "This is the tcb3 file format! (tip compressed binary format version 3)\n";
       uint64_t text_header_size = tip_strlen(text_header);
-      assert(text_header_size < 99);
+      TIP_ASSERT(text_header_size < 99);
       uint64_t text_header_padding_size = 100 - text_header_size;
       uint64_t version = 3;
 
@@ -1492,7 +1335,7 @@ namespace tip_file_format_tcb3{
     printf("Diff Size Index Size:    %10llu b\n", diff_size_index_size);
     printf("Name Index Size:         %10llu b\n", substitue_name_index_size);
 
-    assert(total_bytes_written <= buffer_size);
+    TIP_ASSERT(total_bytes_written <= buffer_size);
 
     diff_sizes->destroy();
     name_index_encoding_table.destroy();
@@ -1538,7 +1381,7 @@ namespace tip_file_format_tcb3{
     /*
       char* text_header = "This is the tcb3 file format! (tip compressed binary format version 3)\n";
       uint64_t text_header_size = tip_strlen(text_header);
-      assert(text_header_size < 99);
+      TIP_ASSERT(text_header_size < 99);
       uint64_t text_header_padding_size = 100 - text_header_size;
       uint64_t version = 3;
 
@@ -1621,7 +1464,7 @@ namespace tip_file_format_tcb3{
           deserialize_range_bit_aligned_bit_length(buffer, &write_position_in_bits, &event.type, event_type_size);
 
           if(event.type == tip_Event_Type::stop){ //has to have the same name as the last start event on the stack
-            assert(last_start_event_name_index_stack.size > 0);
+            TIP_ASSERT(last_start_event_name_index_stack.size > 0);
             event.name_id = last_start_event_name_index_stack[last_start_event_name_index_stack.size - 1];
             last_start_event_name_index_stack.delete_last();
           }
@@ -1644,7 +1487,7 @@ namespace tip_file_format_tcb3{
       total_bytes_written += (write_position_in_bits + 7) / 8; //the + 7 effectively rounds up in the integer division
     }
     
-    assert(total_bytes_written == file_buffer.size);
+    TIP_ASSERT(total_bytes_written == file_buffer.size);
     file_buffer.destroy();
     return snapshot;
   }
