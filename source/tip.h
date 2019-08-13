@@ -1,4 +1,39 @@
-//tip is licensed under the MIT License. The full license agreement can be found at the end of this file.
+//Tiny Instrumented Profiler (TIP) - v0.9 - MIT licensed
+//authored from 2018-2019 by Simon van Bernem
+// 
+// This library gathers information about the execution time of a programm and
+// exports it into an intermediary format and/or a JSON format that can be used
+// with the chrome profiler frontend (URL "chrome://tracing" in any chrome browser).
+// 
+// 
+// QUICKSTART: If you just want to get started and don't care about anything
+//             else, search for @EXAMPLES and look at the first one.
+// 
+// 
+// LICENSE: TIP is licensed under the MIT License. The full license agreement
+//          can be found at the end of this file.
+// 
+// 
+// STRUCTURE: This file contains several sections:
+//    @EXAMPLES contains example programms that use various parts of TIP.
+//    If you just want to get it up and running, look here!
+// 
+//    @API DOCUMENTATION is where you can find the full API documentation.
+// This is a tiny instrumenting profiler (TIP). You can use this library to
+// measure how long certain parts of your code took to execute, by using
+// provided profiling macros. You can profile scopes, functions, set manual
+// zones and record asynchronous zones. At any time, you can query the gathered
+// profiling-data into a binary snapshot, which can be exported to a file
+// readable by the chrome profiling frontend (URL chrome://tracing in any chrome
+// browser), or you can write a custom export function for it.
+// 
+// TIP is shipped as a single-header library: The header and implementation are
+// both contained in this file
+
+// This file contains:
+
+//
+//
 
 // USAGE
 //
@@ -14,6 +49,79 @@
 //----------------------------------@EXAMPLES-----------------------------------
 //------------------------------------------------------------------------------
 
+
+//------------------------------------------------------------------------------
+// Example 1: Minimal example that records one profiling zone and saves it to a
+// file. This file can then be viewed with the chrome profiling frontend
+#if 0
+
+#define TIP_AUTO_INIT //make TIP take care of initialization
+#define TIP_IMPLEMENTATION //generate implementation in this file
+#include "tip.h"
+
+void main(){
+  {
+    TIP_PROFILE_SCOPE("cool stuff happening");
+  }
+  tip_export_state_to_chrome_json("profiling_data.json");
+  //open this file with a chrome browser at the URL chrome://tracing
+}
+
+#endif
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Example 2: Using all available profiling macros with a complex control flow
+// to generate some actually interesting profiling data. You might want to
+// execute this example and open the json file in the chrome frontend, to better
+// understand the control flow and the purpose of each profiling macro.
+#if 0
+
+#define TIP_AUTO_INIT
+#define TIP_IMPLEMENTATION
+#include "tip.h"
+
+void burn_cpu(int index){
+  TIP_PROFILE_FUNCTION();
+  for(int dummy = 0; dummy < index * 1000 + 1000; dummy++){}
+}
+
+void do_stuff(int index);
+
+void main(){
+  TIP_PROFILE_ASYNC_START("Time until 17"); //opening an async zone that will be closed in do_stuff
+  TIP_PROFILE_FUNCTION(); //profile this scope with the name of the function
+  TIP_PROFILE_START("manual_main"); //open a manual zone
+
+  for(int i = 0; i < 20; i++){
+    TIP_PROFILE_SCOPE("scope1"); //profile this scope
+    do_stuff(i);
+  }
+
+  TIP_PROFILE_ASYNC_STOP("Time from 5"); //close an async zone that will be started in do_stuff
+  TIP_PROFILE_STOP("manual_main"); //close a manual zone
+
+  tip_export_state_to_chrome_json("profiling_data.json");
+  //open this file with a chrome browser at the URL chrome://tracing
+}
+
+void do_stuff(int index){
+  TIP_PROFILE_FUNCTION();
+
+  if(index == 5)
+    TIP_PROFILE_ASYNC_START("Time from 5"); //close the async zone that was started in main
+
+  if(index == 17)
+    TIP_PROFILE_ASYNC_STOP("Time until 17"); //open an async zone that will be closed in main
+
+  {
+    TIP_PROFILE_SCOPE_COND("If even, profile this scope.", index % 2 == 0);
+    burn_cpu(index);
+  }
+  burn_cpu(index);
+}
+#endif
+//------------------------------------------------------------------------------
 
 
 #ifndef TIP_HEADER
@@ -402,9 +510,14 @@ TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* 
 // profiling-frontend. To use the chrome profiling frontend, navigate to the URL
 // "chrome://tracing" in a chrome browser.
 
+TIP_API int64_t tip_export_state_to_chrome_json(char* file_name);
+// Creates a snapshot, exports it using tip_export_snapshot_to_chrome_json and
+// frees it. Simply a shortcut
+
 TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percentage_of_async_events = 0.01f, uint64_t average_name_length = 10);
 // Calculates a size estimate of the json file, that would be generated by
 // tip_export_snapshot_to_chrome_json for a given snapshot.
+
 //------------------------------------------------------------------------------
 
 
@@ -804,7 +917,7 @@ double tip_global_init(){
   int64_t rdtsc_diff = rdtsc_end - rdtsc_start;
   int64_t reliable_diff = reliable_end - reliable_start;
 
-  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0 && "We got a zero or negative time interval on trying to determin the frequency of RDTSC");
+  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0 && "We got a zero or negative time interval on trying to determine the frequency of RDTSC");
 
   double time_passed = double(reliable_diff) / double(tip_get_reliable_timestamp_frequency());
   tip_global_state.clocks_per_second = rdtsc_diff / time_passed;
@@ -941,6 +1054,13 @@ T tip_min(T v0, T v1){
     return v1;
 }
 
+int64_t tip_export_state_to_chrome_json(char* file_name){
+  auto snapshot = tip_create_snapshot();
+  auto file_size = tip_export_snapshot_to_chrome_json(snapshot, file_name);
+  tip_free_snapshot(snapshot);
+  return file_size;
+}
+
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
   FILE* file = nullptr;
   fopen_s(&file, file_name, "w+");
@@ -1019,11 +1139,12 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
           fprintf(file, ",\n");
 
         fprintf(file,"  {\"name\":\"%s\","
-                // "\"cat\":\"PERF\","
+                "\"cat\":\"%s\","
+                "\"id\":1,"
                 "\"ph\":\"%c\","
                 "\"pid\":%d,"
                 "\"tid\":%d,"
-                "\"ts\":%.3f}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
+                "\"ts\":%.3f}", escaped_name_buffer.buffer, escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
       }
     }
 

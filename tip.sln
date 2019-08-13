@@ -1,14 +1,14 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.489
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "test", "build\test.exe", "{5158D7B1-8C5C-460F-A4F9-99FE2C8E78B9}"
 	ProjectSection(DebuggerProjectSystem) = preProject
 		PortSupplier = 00000000-0000-0000-0000-000000000000
-		Executable = B:\tip\build\test.exe
+		Executable = O:\ws\tip\build\test.exe
 		RemoteMachine = SIMON
-		StartingDirectory = B:\tip\build
+		StartingDirectory = O:\ws\tip\build
 		Arguments = 
 		Environment = Default
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
@@ -26,5 +26,8 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6C96DAC3-0B63-4A1E-8005-7EAB35B17D14}
 	EndGlobalSection
 EndGlobal

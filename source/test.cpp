@@ -1,3 +1,4 @@
+#if 0
 #define TIP_USE_RDTSC
 #define TIP_WINDOWS
 #define TIP_IMPLEMENTATION
@@ -69,3 +70,64 @@ void main(){
 	*/
 
 }
+#endif
+#define e2
+
+#ifdef e1
+#define TIP_AUTO_INIT //make TIP take care of initialization
+#define TIP_IMPLEMENTATION //generate implementation in this file
+#include "tip.h"
+
+void main(){
+  {
+    TIP_PROFILE_SCOPE("cool stuff happening");
+  }
+  tip_export_state_to_chrome_json("profiling_data.json");
+  //open this file with a chrome browser at the URL chrome://tracing
+}
+#endif
+
+#ifdef e2
+
+#define TIP_AUTO_INIT
+#define TIP_IMPLEMENTATION
+#include "tip.h"
+
+void burn_cpu(int index){
+  TIP_PROFILE_FUNCTION();
+  for(int dummy = 0; dummy < index * 1000 + 1000; dummy++){}
+}
+
+void do_stuff(int index){
+  TIP_PROFILE_FUNCTION();
+
+  if(index == 5)
+    TIP_PROFILE_ASYNC_START("Time from 5");
+
+  if(index == 17)
+    TIP_PROFILE_ASYNC_STOP("Time until 17");
+
+  {
+    TIP_PROFILE_SCOPE_COND("If even, profile this scope.", index % 2 == 0);
+    burn_cpu(index);
+  }
+  burn_cpu(index);
+}
+
+void main(){
+  TIP_PROFILE_ASYNC_START("Time until 17");
+  TIP_PROFILE_FUNCTION();
+  TIP_PROFILE_START("manual_main");
+
+  for(int i = 0; i < 20; i++){
+    TIP_PROFILE_SCOPE("scope1");
+    do_stuff(i);
+  }
+
+  TIP_PROFILE_ASYNC_STOP("Time from 5");
+  TIP_PROFILE_STOP("manual_main");
+
+  tip_export_state_to_chrome_json("profiling_data.json");
+}
+
+#endif
