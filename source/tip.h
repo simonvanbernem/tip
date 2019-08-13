@@ -128,9 +128,25 @@ void do_stuff(int index){
 #define TIP_HEADER
 
 
-// You can define any of these macros to integrate TIP into your codebase. Use TIP_API to define function prefixes for dll export/import.
+//------------------------------------------------------------------------------
+//--------------------------@FEATURE TOGGLES------------------------------------
+//------------------------------------------------------------------------------
+
+// TIP_AUTO_INIT
+// TIP_WINDOWS
+// TIP_USE_RDTSC
+// TIP_MEMORY_LIMIT
+// TIP_GLOBAL_TOGGLE
+
+//------------------------------------------------------------------------------
+//------------------------------@DEFINES----------------------------------------
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+//Codebase integration: TIP provides the option to replace functionality like asserts and memory allocation.
+
 #ifndef TIP_API
-#define TIP_API
+#define TIP_API // Use this to define function prefixes for API functions like dll export/import.
 #endif
 
 #ifndef TIP_ASSERT
@@ -379,21 +395,22 @@ struct tip_Snapshot{
 // incurs a runtime cost (if-check on recording a profiling event)
 
 TIP_API double tip_global_init();
-// Initializes the global state of TIP and should be called before any other
-// function, once. If the global state was already initialized, this function
-// does nothing. If TIP_AUTO_INIT is defined, there is no need to call this
-// fuction.
+// Initializes the global state of TIP and returns the resolution of the clock
+// as the smallest representable interval in seconds. This function should be
+// the first call to the TIP-API that you make. If the global state was already
+// initialized, this function does nothing. If TIP_AUTO_INIT is defined, there
+// is no need to call this fuction.
 
 TIP_API void tip_thread_init();
-// Initializes the thread-local state of TIP and should be called after
+// Initializes the thread-local state of TIP and should be called once, after
 // tip_global_init but before attempting to record profiling events in that
-// thread, once. If the thread-local state was already initialized, this
+// thread. If the thread-local state was already initialized, this
 // function does nothing. If TIP_AUTO_INIT is defined, there is no need to
 // call this fuction.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// Global toggle: if TIP_TOGGLE_PROFILING_GLOBALLY is defined, a bool will be
+// Global toggle: if TIP_GLOBAL_TOGGLE is defined, a bool will be
 // added to the global state, that controls whether profiling events are
 // recorded. The toggle starts deactivated (false), so no profiling events will
 // be recorded until it is activated. This can be usefull if you only want to
@@ -402,20 +419,73 @@ TIP_API void tip_thread_init();
 // querying the global toggle is valid BEFORE calling tip_global_init.
 
 TIP_API void tip_set_global_toggle(bool toggle);
-// If TIP_TOGGLE_PROFILING_GLOBALLY is defined, this function sets the state
+// If TIP_GLOBAL_TOGGLE is defined, this function sets the state
 // global toggle. Otherwise, this function does nothing.
 // The global state need not be initialized to set the global toggle.
 
+TIP_API bool tip_set_global_toggle_after_delay(bool toggle, double delay_in_seconds);
+// If TIP_GLOBAL_TOGGLE is defined, this function sets the state
+// of the global toggle on the first attempt to record a profiling zone, after the delay  after the delay. . Otherwise, this function does nothing.
+// The global state needs to be initialized to set the global toggle.
+
 TIP_API bool tip_get_global_toggle();
-// If TIP_TOGGLE_PROFILING_GLOBALLY is defined, this function returns the
+// If TIP_GLOBAL_TOGGLE is defined, this function returns the
 // current state of the global toggle. Otherwise, this function return true.
 // The global state need not be initialized to query the global toggle.
+
+//------------------------------------------------------------------------------
+TIP_API void tip_set_memory_limit(uint64_t size_in_bytes);
+// If TIP_MEMORY_LIMIT is defined, this function sets a memory-limit that
+// TIP will not exceed. Otherwise this function does nothing. Any profiling
+// events that attempt to be recorded, but would exceed this limit will not be
+// recorded. A value of 0 means no limit.
+// In order to begin recording profiling data again in such a sitation, either
+// the memory limit has to be increased, or the internal profiling data has to
+// be cleared. This is possible by either calling tip_create_snapshot with the
+// argument erase_snapshot_data_from_internal_state set to true, or calling
+// tip_clear_internal_profiling_data.
+// Note that no data will be deleted, if the limit is set below the current
+// memory footprint.
+
+TIP_API uint64_t tip_get_memory_limit();
+// If TIP_MEMORY_LIMIT is defined, this function returns the memory limit, that
+// TIP will not exceed. Otherwise, this function returns 0. A return value of 0
+// means that there is no limit.
+
+TIP_API uint64_t tip_get_current_memory_footprint();
+// Returns the current memory footprint of TIP. This includes any allocated or
+// global data, but excludes any objects on the stack.
+// If TIP_MEMORY_LIMIT is not defined, this function has to take a lock for each
+// thread that initialized thread state and may take longer to execute as a result.
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Categories: You can group profiling zones into categories and instruct TIP to
+// only record profiling zones of some categories, by setting a filter. To
+// determine what categories to include, TIP performs a bitwise AND on the
+// category filter and the category value. This means each category should be a
+// power of two, since the filter is a bitmask. You can create filters that let
+// multiple categories pass, by ORing these categories together. That way, you
+// can also create profiling zones that blong to multiple categories.
+
+TIP_API void tip_set_category_filter(uint64_t bitmask);
+// Sets the category filter. Any attempt to record a profiling zone will be
+// discarded, if its category does not pass the category filter. A category
+// passes, if the value of the category ANDed with the value of the category
+// filter is non-zero.
+
+TIP_API uint64_t tip_get_category_filter();
+// Gets the current category filter.
+
+TIP_API bool tip_does_category_pass_filter(uint64_t category);
+// Returns true if the category passes the current category filter,
+// returns false otherwise. This is simply a bitwise AND.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
 // Profiling macros: These macros are used to actually record the profiling
 // data. Use them to mark sections that you want profile. If
-// TIP_TOGGLE_PROFILING_GLOBALLY is defined, and the global toggle is disable,
+// TIP_GLOBAL_TOGGLE is defined, and the global toggle is disable,
 // these macros do nothing.
 // 
 // Every once in a while, a call to these macros will
@@ -493,6 +563,8 @@ TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_
 // most clocks I've observed report a much higher resolution than they actually
 // have)
 
+TIP_API void tip_clear_internal_profiling_data();
+
 TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
 // Frees the memory of a snapshot
 
@@ -520,8 +592,7 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 
 //------------------------------------------------------------------------------
 
-
-#ifndef TIP_TOGGLE_PROFILING_GLOBALLY
+#ifndef TIP_GLOBAL_TOGGLE
   #define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test");
   #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, condition);
   #define TIP_PROFILE_FUNCTION() tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__);
@@ -796,7 +867,7 @@ struct tip_Thread_State{
 struct tip_Global_State{
   bool initialized = false;
 
-#ifdef TIP_TOGGLE_PROFILING_GLOBALLY
+#ifdef TIP_GLOBAL_TOGGLE
   bool toggle = false;
 #endif
 
@@ -812,7 +883,7 @@ static tip_Global_State tip_global_state;
 
 
 void tip_set_global_toggle(bool toggle) {
-#ifdef TIP_TOGGLE_PROFILING_GLOBALLY
+#ifdef TIP_GLOBAL_TOGGLE
   tip_global_state.toggle = toggle;
 #else
   (void) toggle;
@@ -820,7 +891,7 @@ void tip_set_global_toggle(bool toggle) {
 }
 
 bool tip_get_global_toggle() {
-#ifdef TIP_TOGGLE_PROFILING_GLOBALLY
+#ifdef TIP_GLOBAL_TOGGLE
   return tip_global_state.toggle;
 #else
   return true;
@@ -848,7 +919,7 @@ void assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(
       tip_thread_init();
     }
   #else
-    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_TOGGLE_PROFILING_GLOBALLY and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
+    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
   #endif
 }
 
@@ -1710,7 +1781,7 @@ namespace tip_file_format_tcb3{
 
 // MIT License
 // 
-// Copyright (c) 2018 Simon van Bernem
+// Copyright (c) 2018-2019 Simon van Bernem
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
