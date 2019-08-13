@@ -178,65 +178,65 @@ TIP_API bool tip_string_is_equal(char* string1, char* string2);
 
 template<typename T>
 struct tip_Dynamic_Array{
-  T* buffer = nullptr;
+  T* data = nullptr;
   uint64_t size = 0;
   uint64_t capacity = 0;
 
   void init(uint64_t initial_capacity){
-    buffer = (T*) TIP_MALLOC(sizeof(T) * initial_capacity);
+    data = (T*) TIP_MALLOC(sizeof(T) * initial_capacity);
     capacity = initial_capacity;
     size = 0;
   }
 
   void insert(T element, uint64_t count = 1){
-    if(buffer == nullptr)
+    if(data == nullptr)
       init(count * 2);
 
     uint64_t new_size = size + count;
 
     if(new_size > capacity){
       capacity = new_size * 2;
-      buffer = (T*) realloc(buffer, capacity * sizeof(T));
+      data = (T*) realloc(data, capacity * sizeof(T));
     }
 
     for(uint64_t i = size; i < new_size; i++){
-      buffer[i] = element;
+      data[i] = element;
     }
 
     size = new_size;
   }
 
   void insert(T* elements, uint64_t number_of_elements){
-    if(buffer == nullptr)
+    if(data == nullptr)
       init(number_of_elements * 2);
 
     uint64_t new_size = size + number_of_elements;
 
     if(new_size > capacity){
       capacity = new_size * 2;
-      buffer = (T*) realloc(buffer, capacity * sizeof(T));
+      data = (T*) realloc(data, capacity * sizeof(T));
     }
 
-    memcpy(buffer + size, elements, number_of_elements * sizeof(T));
+    memcpy(data + size, elements, number_of_elements * sizeof(T));
 
     size = new_size;
   }
 
   T& operator[](uint64_t index){
-    return buffer[index];
+    return data[index];
   }
 
-  void delete_last(){
-    if(size > 0)
-      size--;
+  void clear_last(uint64_t count = 1){
+    if(size >= count)
+      size -= count;
   }
 
   T* begin(){
-    return buffer;
+    return data;
   }
 
   T* end(){
-    return buffer + size;
+    return data + size;
   }
 
   void clear(){
@@ -244,8 +244,8 @@ struct tip_Dynamic_Array{
   }
 
   void destroy(){
-    TIP_FREE(buffer);
-    buffer = nullptr;
+    TIP_FREE(data);
+    data = nullptr;
     size = 0;
     capacity = 0;
   }
@@ -297,7 +297,7 @@ struct tip_String_Interning_Hash_Table{
       if(name_indices[i] == -1)
         return;
 
-      char* string = name_buffer.buffer + name_indices[i];
+      char* string = name_buffer.data + name_indices[i];
       uint64_t string_length = tip_strlen(string);
       uint64_t hash_index = fvn_hash(string, string_length) % new_name_indices.size;
 
@@ -312,7 +312,7 @@ struct tip_String_Interning_Hash_Table{
   }
 
   uint64_t intern_string(char* string){
-    if(name_buffer.buffer == nullptr)
+    if(name_buffer.data == nullptr)
       init(64);
 
     uint64_t string_length = tip_strlen(string);
@@ -320,7 +320,7 @@ struct tip_String_Interning_Hash_Table{
 
 
     while(name_indices[hash_index] != -1){ //linear probing
-      char* found_string = name_buffer.buffer + name_indices[hash_index];
+      char* found_string = name_buffer.data + name_indices[hash_index];
       bool equal = tip_string_is_equal(string, found_string);
 
       if(equal)
@@ -341,7 +341,7 @@ struct tip_String_Interning_Hash_Table{
   }
 
   char* get_string(uint64_t id){
-    return name_buffer.buffer + id;
+    return name_buffer.data + id;
   }
 
   void destroy(){
@@ -617,23 +617,26 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
 TIP_API uint64_t tip_get_timestamp();
 
+TIP_API uint64_t tip_scoped_profiler_push_name(const char* data, uint64_t size);
+TIP_API char* tip_scoped_profiler_pop_name(uint64_t index);
+
 struct tip_Scope_Profiler{
-  const char* name;
+  uint64_t name_identifier;
   uint64_t length_including_null;
   tip_Scope_Profiler(const char* event_name){
     length_including_null = tip_strlen(event_name) + 1;
-    name = event_name;
-    tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::start);
+    name_identifier = tip_scoped_profiler_push_name(event_name, length_including_null);
+    tip_save_profile_event(tip_get_timestamp(), event_name, length_including_null, tip_Event_Type::start);
   }
 
   ~tip_Scope_Profiler(){
-    tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::stop);
+    tip_save_profile_event(tip_get_timestamp(), tip_scoped_profiler_pop_name(name_identifier), length_including_null, tip_Event_Type::stop);
   }
 };
 
 struct tip_Conditional_Scope_Profiler{
   bool condition;
-  const char* name;
+  uint64_t name_identifier;
   uint64_t length_including_null;
   tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition){
     condition = new_condition;
@@ -642,15 +645,15 @@ struct tip_Conditional_Scope_Profiler{
       return;
 
     length_including_null = tip_strlen(event_name) + 1;
-    name = event_name;
-    tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::start);
+    name_identifier = tip_scoped_profiler_push_name(event_name, length_including_null);
+    tip_save_profile_event(tip_get_timestamp(), event_name, length_including_null, tip_Event_Type::start);
   }
 
   ~tip_Conditional_Scope_Profiler(){
     if(!condition)
       return;
 
-    tip_save_profile_event(tip_get_timestamp(), name, length_including_null, tip_Event_Type::stop);
+    tip_save_profile_event(tip_get_timestamp(), tip_scoped_profiler_pop_name(name_identifier), length_including_null, tip_Event_Type::stop);
   }
 };
 
@@ -862,6 +865,8 @@ struct tip_Thread_State{
 
   tip_Event_Buffer* first_event_buffer;
   tip_Event_Buffer* current_event_buffer;
+
+  tip_Dynamic_Array<char> scoped_profiling_name_stack;
 };
 
 struct tip_Global_State{
@@ -880,6 +885,19 @@ struct tip_Global_State{
 
 thread_local tip_Thread_State tip_thread_state;
 static tip_Global_State tip_global_state;
+
+
+uint64_t tip_scoped_profiler_push_name(const char* data, uint64_t size){
+  uint64_t index = tip_thread_state.scoped_profiling_name_stack.size;
+  tip_thread_state.scoped_profiling_name_stack.insert((char*) data, size);
+  return index;
+}
+
+char* tip_scoped_profiler_pop_name(uint64_t index){
+  tip_thread_state.scoped_profiling_name_stack.clear_last(tip_thread_state.scoped_profiling_name_stack.size - index);
+  //the name is in the cleared part of the dynamic array, which means it would be overwritten by the next insertion. Since this is only used in the destructor of scoped profilers, we can ensure, that there will be no new names pushed on the stack, before this one is used. So this looks dodgy, but is fine.
+  return tip_thread_state.scoped_profiling_name_stack.data + index;
+}
 
 
 void tip_set_global_toggle(bool toggle) {
@@ -1164,7 +1182,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
         else{
           tip_Event last_event_on_stack = event_stack[event_stack.size - 1];
           if(last_event_on_stack.type == tip_Event_Type::start && last_event_on_stack.name_id == event.name_id){
-            event_stack.delete_last();
+            event_stack.clear_last();
 
             if(first)
               first = false;
@@ -1186,7 +1204,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
                     "\"pid\":%d,"
                     "\"tid\":%d,"
                     "\"ts\":%.3f,"
-                    "\"dur\":%.3f}", escaped_name_buffer.buffer, snapshot.process_id, thread_id, timestamp, duration);
+                    "\"dur\":%.3f}", escaped_name_buffer.data, snapshot.process_id, thread_id, timestamp, duration);
           }
           else{
             event_stack.insert(event);
@@ -1215,7 +1233,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
                 "\"ph\":\"%c\","
                 "\"pid\":%d,"
                 "\"tid\":%d,"
-                "\"ts\":%.3f}", escaped_name_buffer.buffer, escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
+                "\"ts\":%.3f}", escaped_name_buffer.data, escaped_name_buffer.data, type, snapshot.process_id, thread_id, timestamp);
       }
     }
 
@@ -1239,7 +1257,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
               "\"ph\":\"%c\","
               "\"pid\":%d,"
               "\"tid\":%d,"
-              "\"ts\":%.3f}", escaped_name_buffer.buffer, type, snapshot.process_id, thread_id, timestamp);
+              "\"ts\":%.3f}", escaped_name_buffer.data, type, snapshot.process_id, thread_id, timestamp);
     }
 
     event_stack.clear();
@@ -1746,7 +1764,7 @@ namespace tip_file_format_tcb3{
           if(event.type == tip_Event_Type::stop){ //has to have the same name as the last start event on the stack
             TIP_ASSERT(last_start_event_name_index_stack.size > 0);
             event.name_id = last_start_event_name_index_stack[last_start_event_name_index_stack.size - 1];
-            last_start_event_name_index_stack.delete_last();
+            last_start_event_name_index_stack.clear_last();
           }
           else{
             uint64_t substitute_index = 0;
