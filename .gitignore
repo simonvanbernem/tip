@@ -1,4 +1,5 @@
 build/
+.vs/
 *.db
 *.opendb
 *.suo
