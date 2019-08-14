@@ -1069,7 +1069,14 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
 }
 #endif
 
+static const char* tip_get_new_buffer_message = "TIP getting new buffer";
+static const uint64_t tip_get_new_buffer_message_size_including_terminator = tip_strlen("TIP getting new buffer") + 1;
+
+void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
+
 bool tip_get_new_event_buffer(){
+  auto get_buffer_start_time = tip_get_timestamp();
+
 #ifdef TIP_MEMORY_LIMIT
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) tip_try_malloc_with_respect_to_memory_limit(sizeof(tip_Event_Buffer));
   if(!new_buffer)
@@ -1095,6 +1102,11 @@ bool tip_get_new_event_buffer(){
 
   tip_thread_state.current_event_buffer = new_buffer;
 
+  auto get_buffer_end_time = tip_get_timestamp();
+
+  tip_save_profile_event_without_checks(get_buffer_start_time, tip_get_new_buffer_message, tip_get_new_buffer_message_size_including_terminator, tip_Event_Type::start);
+  tip_save_profile_event_without_checks(get_buffer_end_time  , tip_get_new_buffer_message, tip_get_new_buffer_message_size_including_terminator, tip_Event_Type::stop);
+
   return true;
 }
 
@@ -1111,28 +1123,10 @@ void assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(
   #endif
 }
 
-void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
-  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
-
-#ifdef TIP_MEMORY_LIMIT
-  if(global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
-    return;
-#endif
-
-  uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
-
-  if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end){
-
-#ifdef TIP_MEMORY_LIMIT
-    bool got_new_buffer = tip_get_new_event_buffer();
-    if(!got_new_buffer)
-      return;
-#else
-    tip_get_new_event_buffer();
-#endif
-  }
-
-  tip_Event_Buffer* buffer = tip_thread_state.current_event_buffer; 
+void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type) {
+  tip_Event_Buffer* buffer = tip_thread_state.current_event_buffer;
+  
+  TIP_ASSERT(buffer);
 
   uint8_t* data_pointer = buffer->current_position;
   *((uint64_t*)data_pointer) = timestamp;
@@ -1145,6 +1139,35 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
   data_pointer += name_length_including_terminator;
 
   buffer->current_position = data_pointer;
+
+  TIP_ASSERT(buffer->current_position <= buffer->end);
+}
+
+void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
+  const uint64_t get_new_buffer_event_size = sizeof(timestamp) + sizeof(type) + sizeof(uint64_t) + tip_get_new_buffer_message_size_including_terminator;
+
+  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+
+#ifdef TIP_MEMORY_LIMIT
+  if(global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+    return;
+#endif
+
+  uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
+
+  TIP_ASSERT(event_size + get_new_buffer_event_size * 2 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TUP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
+  if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end){
+
+#ifdef TIP_MEMORY_LIMIT
+    bool got_new_buffer = tip_get_new_event_buffer();
+    if(!got_new_buffer)
+      return;
+#else
+    tip_get_new_event_buffer();
+#endif
+  }
+
+  tip_save_profile_event_without_checks(timestamp, name, name_length_including_terminator, type);
 }
 
 bool tip_thread_init(){
@@ -1180,6 +1203,8 @@ bool tip_thread_init(){
 }
 
 double tip_global_init(){
+  static_assert(TIP_EVENT_BUFFER_SIZE > 128, "TIP_EVENT_BUFFER_SIZE must be at least 128 bytes big. TIP makes various assumptions that rely on that, for example, that a newly allocated buffer is always big enough to hold two events that record that buffers creation time.");
+
   if(tip_global_state.initialized)
     return 1. / tip_global_state.clocks_per_second;
 
