@@ -144,10 +144,10 @@ void main(){
 
 void main(){
   tip_global_init();
-  tip_set_memory_limit(16 * 1024 * 1024);
+  tip_set_memory_limit(2 * 1024 * 1024);
   tip_thread_init();
 
-  for(int i = 0; i < 1000; i++){
+  for(int i = 0; i < 10000; i++){
     TIP_PROFILE_SCOPE("scope1");
     for(int j = 0; j < 1000; j++) {
       TIP_PROFILE_SCOPE("scope2");
@@ -156,8 +156,8 @@ void main(){
     //   tip_set_memory_limit(5 * 1024 * 1024);
     // if (i == 7000)
     //   tip_set_memory_limit(0);
-    // if (i == 8000)
-    //   tip_set_memory_limit(128 * 1024);
+    if (i == 8000)
+      tip_set_memory_limit(30 * 1024 * 1024);
   }
 
   printf("%.3fKiB/%.3fKiB used.\n", double(tip_get_current_memory_footprint()) / 1024., double(tip_get_memory_limit()) / 1024.);
