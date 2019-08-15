@@ -215,19 +215,26 @@ struct tip_Dynamic_Array{
 
 #ifdef TIP_MEMORY_LIMIT
     //why this works without taking a critical section is documented in tip_Global_State
-    u64 growth_size = new_capacity - capacity;
+    uint64_t growth_size = new_capacity - capacity;
 
-    while(growth_size > 0){
-      //max_growth_size of 0 means unlimited growth
-      u64 growth_size_this_step = max_growth_size == 0 ? growth_size : min(growth_size, max_growth_size);
-      data = tip_try_realloc_with_respect_to_memory_limit(data, sizeof(T) * (capacity + growth_size_this_step), growth_size_this_step);
-      
-      if(!data)
-        return false;
-
-      grow_size -= growth_size_this_step;
+    if (max_growth_size == 0) {
+      //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
+      data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
       capacity = new_capacity;
     }
+    else {
+      while (growth_size > 0) {
+        uint64_t growth_size_this_step = tip_min(growth_size, max_growth_size);
+        data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, sizeof(T) * capacity, growth_size_this_step);
+
+        if (!data)
+          return false;
+
+        growth_size -= growth_size_this_step;
+        capacity = new_capacity;
+      }
+    }
+
 #else
     data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
     capacity = new_capacity;
@@ -402,18 +409,25 @@ struct tip_String_Interning_Hash_Table{
 
 TIP_API bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs);
 
-
 enum class tip_Event_Type{
   start = 0,
   stop = 1,
   start_async = 2,
   stop_async = 3,
-  enum_size = 4
+  event = 4,
+
+  //tip info events
+  tip_get_new_buffer_start = 5,
+  tip_get_new_buffer_stop = 6,
+  tip_recording_halted_because_of_memory_limit_start = 7,
+  tip_recording_halted_because_of_memory_limit_stop = 8,
+
+  enum_size = 9
 };
 
 struct tip_Event{
   uint64_t timestamp;
-  int64_t name_id; //I think this cant be unsigned, because of the string interning hashtable, I don't know though, might be wrong on this.
+  int64_t name_id = -1; //I think this cant be unsigned, because of the string interning hashtable, I don't know though, might be wrong on this.
   tip_Event_Type type;
 };
 
@@ -794,6 +808,10 @@ bool tip_string_is_equal(char* string1, char* string2){
   return false;
 }
 
+bool is_type_info_event(tip_Event_Type type){
+  return type >= tip_Event_Type::tip_get_new_buffer_start;
+}
+
 
 #ifdef TIP_WINDOWS
 #ifndef NOMINMAX
@@ -953,10 +971,12 @@ struct tip_Global_State{
   //To actually make this happen, we have to know what the maximum allocation size can be. We only do two types of allocations: allocating an event buffer, of which the size is known and growing a dynamic array. To put an upper bound on the dynamic array growth, which normaly grows by a factor and thus has none, we introduce a limit in the data structure itsself.
   //Once an attempt to save a profiling zone hits the limit, we set a flag that prevents any other events from beeing recorded. Since each thread has different buffers, many other events might still be able to record, but it would be very confusing to just "miss" the events of one thread while the others keep going.
   //@TODO there is still a race condition here that is not handled: if one thread hits the limit and is swapped out for another one that doesn't, that ones event will still be saved, with a possible later timestamp than the event that hit the limit. So maybe we should actually save the timestamp(s) when we ran out of memory (or had space available again) and discard any events after than on creating the snapshot. Since is a less important issue though, since it will never cause us to overrun the hard limit.
-  uint64_t occupied_memory;
+  volatile uint64_t occupied_memory;
   uint64_t hard_memory_limit;
-  uint64_t soft_memory_limit;
+  int64_t soft_memory_limit; //this can go negative if the hard limit is really low, and a new thread gets initialized. it will subtract TIP_EVENT_BUFFER_SIZE from this, which might be bigger than the hard limit itsself
   bool stop_recording_because_an_allocation_hit_the_soft_limit = false;
+  bool try_to_start_recording_again_because_the_memory_limit_was_changed = false;
+  Mutex record_memory_limit_events_mutex;
 #endif
 
   int32_t process_id;
@@ -973,7 +993,17 @@ static tip_Global_State tip_global_state;
 
 void tip_set_memory_limit(uint64_t limit_in_bytes){
 #ifdef TIP_MEMORY_LIMIT
-  tip_global_state.memory_limit = limit_in_bytes;
+  tip_lock_mutex(tip_global_state.thread_states_mutex);
+  
+  tip_global_state.hard_memory_limit = limit_in_bytes;
+  tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
+
+  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit){
+    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = true;
+    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = false;
+  }
+
+  tip_unlock_mutex(tip_global_state.thread_states_mutex);
 #else
   (void) limit_in_bytes;
 #endif
@@ -981,7 +1011,7 @@ void tip_set_memory_limit(uint64_t limit_in_bytes){
 
 uint64_t tip_get_memory_limit(){
 #ifdef TIP_MEMORY_LIMIT
-  return tip_global_state.memory_limit;
+  return tip_global_state.hard_memory_limit;
 #else
   return 0;
 #endif
@@ -1041,38 +1071,52 @@ bool tip_get_global_toggle() {
 #endif
 }
 
+void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
+
 #ifdef TIP_MEMORY_LIMIT
 void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
     return nullptr;
 
-  if(tip_global_state.occupied_memory + allocation > tip_global_state.soft_memory_limit){
-    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true;
+  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + allocation_size) > tip_global_state.soft_memory_limit){
+    if(tip_thread_state.initialized){
+
+      tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
+       //we check again because the value of stop_recording_because_an_allocation_hit_the_soft_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
+      if(!tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit){
+        tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
+      }
+      tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true; //this gets set here to avoid the race condition
+      tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
+    }
+
+    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
+    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
     return nullptr;
   }
 
-  _InterlockedExchangeAdd64(&tip_global_state.occupied_memory, allocation_size);
+  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, allocation_size);
   return TIP_MALLOC(allocation_size);
 }
 
 void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t new_allocation_size, uint64_t growth_over_old_allocation_size){
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
     return nullptr;
 
-  if(tip_global_state.occupied_memory + growth_over_old_allocation_size > tip_global_state.soft_memory_limit){
+  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + growth_over_old_allocation_size) > tip_global_state.soft_memory_limit){
     tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true;
+    if(tip_thread_state.initialized)
+      tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
+
+    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true;
+    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
     return nullptr;
   }
 
-  _InterlockedExchangeAdd64(&tip_global_state.occupied_memory, growth_over_old_allocation_size);
+  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, growth_over_old_allocation_size);
   return TIP_REALLOC(previous_allocation, new_allocation_size);
 }
 #endif
-
-static const char* tip_get_new_buffer_message = "TIP getting new buffer";
-static const uint64_t tip_get_new_buffer_message_size_including_terminator = tip_strlen("TIP getting new buffer") + 1;
-
-void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
 
 bool tip_get_new_event_buffer(){
   auto get_buffer_start_time = tip_get_timestamp();
@@ -1085,6 +1129,19 @@ bool tip_get_new_event_buffer(){
   new_buffer->data = (uint8_t*) tip_try_malloc_with_respect_to_memory_limit(TIP_EVENT_BUFFER_SIZE);
   if(!new_buffer->data)
     return false;
+
+  if(tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed){
+    tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
+
+    //we check again because the value of try_to_start_recording_again_because_the_memory_limit_was_changed might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
+    if(tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed){
+      tip_save_profile_event_without_checks(get_buffer_start_time, nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop);
+      tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
+    }
+
+    tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
+  }
+
 #else
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*)TIP_MALLOC(sizeof(tip_Event_Buffer));
   new_buffer->data = (uint8_t*)TIP_MALLOC(TIP_EVENT_BUFFER_SIZE);
@@ -1104,22 +1161,23 @@ bool tip_get_new_event_buffer(){
 
   auto get_buffer_end_time = tip_get_timestamp();
 
-  tip_save_profile_event_without_checks(get_buffer_start_time, tip_get_new_buffer_message, tip_get_new_buffer_message_size_including_terminator, tip_Event_Type::start);
-  tip_save_profile_event_without_checks(get_buffer_end_time  , tip_get_new_buffer_message, tip_get_new_buffer_message_size_including_terminator, tip_Event_Type::stop);
+  tip_save_profile_event_without_checks(get_buffer_start_time, nullptr, 0, tip_Event_Type::tip_get_new_buffer_start);
+  tip_save_profile_event_without_checks(get_buffer_end_time  , nullptr, 0, tip_Event_Type::tip_get_new_buffer_stop);
 
   return true;
 }
 
-void assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
+bool assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
   #ifdef TIP_AUTO_INIT
     if(!tip_thread_state.initialized){
       if(!tip_global_state.initialized){
         tip_global_init();
       }
-      tip_thread_init();
+      return tip_thread_init();
     }
   #else
     TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
+    return tip_thread_state.initialized;
   #endif
 }
 
@@ -1133,10 +1191,13 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
   data_pointer += sizeof(timestamp);
   *((tip_Event_Type*)data_pointer) = type;
   data_pointer += sizeof(type);
-  *((uint64_t*)data_pointer) = name_length_including_terminator;
-  data_pointer += sizeof(name_length_including_terminator);
-  memcpy(data_pointer, name, name_length_including_terminator);
-  data_pointer += name_length_including_terminator;
+
+  if(!is_type_info_event(type)){
+    *((uint64_t*)data_pointer) = name_length_including_terminator;
+    data_pointer += sizeof(name_length_including_terminator);
+    memcpy(data_pointer, name, name_length_including_terminator);
+    data_pointer += name_length_including_terminator;
+  }
 
   buffer->current_position = data_pointer;
 
@@ -1144,19 +1205,29 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
 }
 
 void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
-  const uint64_t get_new_buffer_event_size = sizeof(timestamp) + sizeof(type) + sizeof(uint64_t) + tip_get_new_buffer_message_size_including_terminator;
+  const uint64_t tip_info_event_size = sizeof(timestamp) + sizeof(type);
 
-  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined())
+    return;
 
 #ifdef TIP_MEMORY_LIMIT
-  if(global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
     return;
 #endif
 
-  uint64_t event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
+  uint64_t event_size;
 
-  TIP_ASSERT(event_size + get_new_buffer_event_size * 2 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TUP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
-  if(event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end){
+  if(is_type_info_event(type))
+    event_size = tip_info_event_size;
+  else
+    event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
+
+  // we need enough space in each new buffer to store at least four info events (if TIP_MEMORY_LIMIT is defined, 2 otherwise), besides the user-event in it:
+  // tip_get_new_buffer_start, tip_get_new_buffer_stop, tip_recording_halted_because_of_memory_limit_start and tip_recording_halted_because_of_memory_limit_stop
+  TIP_ASSERT(event_size + tip_info_event_size * 4 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TUP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
+
+  //we add tip_info_event_size here, because we will need to be able to record a tip_recording_halted_because_of_memory_limit_start info event into this buffer, if the allocation of the next one fails
+  if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end){
 
 #ifdef TIP_MEMORY_LIMIT
     bool got_new_buffer = tip_get_new_event_buffer();
@@ -1188,6 +1259,8 @@ bool tip_thread_init(){
     tip_unlock_mutex(tip_global_state.thread_states_mutex);
     return false;
   }
+
+  tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
 #else
   tip_global_state.thread_states.insert(&tip_thread_state);
 #endif
@@ -1234,6 +1307,7 @@ double tip_global_init(){
   tip_global_state.soft_memory_limit = 0;
   tip_global_state.hard_memory_limit = 0;
   tip_global_state.thread_states.init(50, TIP_EVENT_BUFFER_SIZE);
+  tip_global_state.record_memory_limit_events_mutex = tip_create_mutex();
 #endif
   tip_global_state.process_id = tip_get_process_id();
   tip_global_state.initialized = true;
@@ -1241,8 +1315,12 @@ double tip_global_init(){
   return 1. / tip_global_state.clocks_per_second;
 }
 
+const char* tip_get_new_buffer_string = "TIP get new buffer";
+const char* tip_recording_halted_string = "TIP recording halted because memory limit was hit";
+
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simultaneous_events) {
-  assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined())
+    return {};
 
   tip_Snapshot snapshot = {};
   snapshot.clocks_per_second = tip_global_state.clocks_per_second;
@@ -1268,10 +1346,26 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
         data_pointer += sizeof(event.timestamp);
         event.type = *((tip_Event_Type*)data_pointer);
         data_pointer += sizeof(event.type);
-        uint64_t name_length_including_terminator = *((uint64_t*)data_pointer);
-        data_pointer += sizeof(name_length_including_terminator);
-        event.name_id = snapshot.names.intern_string((char*)data_pointer);
-        data_pointer += name_length_including_terminator;
+
+        if(!is_type_info_event(event.type)){
+          uint64_t name_length_including_terminator = *((uint64_t*)data_pointer);
+          data_pointer += sizeof(name_length_including_terminator);
+          event.name_id = snapshot.names.intern_string((char*) data_pointer);
+          data_pointer += name_length_including_terminator;
+        }
+        else{
+
+          switch(event.type){
+            case tip_Event_Type::tip_get_new_buffer_start:
+            case tip_Event_Type::tip_get_new_buffer_stop:
+              event.name_id = snapshot.names.intern_string((char*) tip_get_new_buffer_string); break;
+            case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:
+            case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:
+              event.name_id = snapshot.names.intern_string((char*) tip_recording_halted_string); break;
+            default: 
+              TIP_ASSERT(false && "This is a bug in the library. Sorry!");
+          }
+        }
 
         if(prohibit_simultaneous_events && thread_events.size > 0){
           auto previous_timestamp = thread_events[thread_events.size - 1].timestamp;
@@ -1363,6 +1457,8 @@ int64_t tip_export_state_to_chrome_json(char* file_name){
 }
 
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name){
+  const uint64_t uint64_t_max = 18446744073709551615llu; // uint64_t max (a.k.a 2^64 - 1)
+
   FILE* file = nullptr;
   fopen_s(&file, file_name, "w+");
   fprintf(file, "{\"traceEvents\": [\n");
@@ -1371,7 +1467,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 
   const double e6 = 1000000;
 
-  uint64_t first_timestamp = 18446744073709551615llu; // uint64_t max (a.k.a 2^64 - 1)
+  uint64_t first_timestamp = uint64_t_max;
   for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     if(snapshot.events[thread_index].size > 0)
       first_timestamp = tip_min(first_timestamp, snapshot.events[thread_index][0].timestamp);
@@ -1384,68 +1480,94 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
     int32_t thread_id = snapshot.thread_ids[thread_index];
     for(tip_Event event : snapshot.events[thread_index]){
 
-      //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
-      if(event.type == tip_Event_Type::start)
-        event_stack.insert(event);
-
-      else if(event.type == tip_Event_Type::stop){ //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
-        if(event_stack.size == 0)
+      switch(event.type){
+        case tip_Event_Type::start:
+        case tip_Event_Type::tip_get_new_buffer_start:{
+          //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
           event_stack.insert(event);
-        else{
-          tip_Event last_event_on_stack = event_stack[event_stack.size - 1];
-          if(last_event_on_stack.type == tip_Event_Type::start && last_event_on_stack.name_id == event.name_id){
-            event_stack.clear_last();
+        }break;
+        case tip_Event_Type::stop:
+        case tip_Event_Type::tip_get_new_buffer_stop:{
+          //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
 
-            if(first)
-              first = false;
-            else
-              fprintf(file, ",\n");
-
-            const char* name = snapshot.names.get_string(event.name_id);
-            
-            //the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by e6. Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
-            double timestamp = double(last_event_on_stack.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
-            double duration = double(event.timestamp - last_event_on_stack.timestamp) * (e6 / snapshot.clocks_per_second);
-
-
-            tip_escape_string_for_json(name, &escaped_name_buffer);
-            
-            fprintf(file,"  {\"name\":\"%s\","
-                    // "\"cat\":\"PERF\","
-                    "\"ph\":\"X\","
-                    "\"pid\":%d,"
-                    "\"tid\":%d,"
-                    "\"ts\":%.3f,"
-                    "\"dur\":%.3f}", escaped_name_buffer.data, snapshot.process_id, thread_id, timestamp, duration);
-          }
-          else{
+          if(event_stack.size == 0
+            || (event.type == tip_Event_Type::stop                    && event_stack[event_stack.size - 1].type != tip_Event_Type::start                   )
+            || (event.type == tip_Event_Type::tip_get_new_buffer_stop && event_stack[event_stack.size - 1].type != tip_Event_Type::tip_get_new_buffer_start)){
             event_stack.insert(event);
+            continue; //there is no matching event
           }
+
+          tip_Event last_event_on_stack = event_stack[event_stack.size - 1];
+          event_stack.clear_last();
+
+          if(first)
+            first = false;
+          else
+            fprintf(file, ",\n");
+
+          const char* name = snapshot.names.get_string(event.name_id);
+          
+          //the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by e6 (10^6). Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
+          double timestamp = double(last_event_on_stack.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
+          double duration = double(event.timestamp - last_event_on_stack.timestamp) * (e6 / snapshot.clocks_per_second);
+
+          tip_escape_string_for_json(name, &escaped_name_buffer);
+          
+          fprintf(file,"  {\"name\":\"%s\","
+                  // "\"cat\":\"PERF\","
+                  "\"ph\":\"X\","
+                  "\"pid\":%d,"
+                  "\"tid\":%d,"
+                  "\"ts\":%.3f,"
+                  "\"dur\":%.3f}", escaped_name_buffer.data, snapshot.process_id, thread_id, timestamp, duration);
+        }break;
+        case tip_Event_Type::start_async:
+        case tip_Event_Type::stop_async:
+        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:
+        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:{
+
+          double timestamp = double(event.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
+          const char* name = snapshot.names.get_string(event.name_id);
+          tip_escape_string_for_json(name, &escaped_name_buffer);
+
+          char type = '!';
+          if(event.type == tip_Event_Type::start_async || event.type == tip_Event_Type::tip_recording_halted_because_of_memory_limit_start)
+            type = 'b';
+          else
+            type = 'e';
+
+          if(first)
+            first = false;
+          else
+            fprintf(file, ",\n");
+
+          fprintf(file,"  {\"name\":\"%s\","
+                  "\"cat\":\"%s\","
+                  "\"id\":1,"
+                  "\"ph\":\"%c\","
+                  "\"pid\":%d,"
+                  "\"tid\":%d,"
+                  "\"ts\":%.3f}", escaped_name_buffer.data, escaped_name_buffer.data, type, snapshot.process_id, thread_id, timestamp);
+        }break;
+        case tip_Event_Type::event:{
+          double timestamp = double(event.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
+          const char* name = snapshot.names.get_string(event.name_id);
+          tip_escape_string_for_json(name, &escaped_name_buffer);
+
+          if(first)
+            first = false;
+          else
+            fprintf(file, ",\n");
+
+          fprintf(file,"  {\"name\":\"%s\","
+                  "\"ph\":\"i\","
+                  "\"pid\":%d,"
+                  "\"tid\":%d,"
+                  "\"ts\":%.3f}", escaped_name_buffer.data, snapshot.process_id, thread_id, timestamp);
+        }break;
+        default:{
+          TIP_ASSERT(false && "Unhandled event type!");
         }
-      }
-      else{    //the only type of events left are the asynchronous ones. we just print these directly
-        double timestamp = double(event.timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);
-        const char* name = snapshot.names.get_string(event.name_id);
-        tip_escape_string_for_json(name, &escaped_name_buffer);
-
-        char type = '!';
-        if(event.type == tip_Event_Type::start_async)
-          type = 'b';
-        else
-          type = 'e';
-
-        if(first)
-          first = false;
-        else
-          fprintf(file, ",\n");
-
-        fprintf(file,"  {\"name\":\"%s\","
-                "\"cat\":\"%s\","
-                "\"id\":1,"
-                "\"ph\":\"%c\","
-                "\"pid\":%d,"
-                "\"tid\":%d,"
-                "\"ts\":%.3f}", escaped_name_buffer.data, escaped_name_buffer.data, type, snapshot.process_id, thread_id, timestamp);
       }
     }
 
@@ -1454,10 +1576,12 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
       const char* name = snapshot.names.get_string(event.name_id);
       tip_escape_string_for_json(name, &escaped_name_buffer);
       char type = '!';
-      if(event.type == tip_Event_Type::start)
+      if(event.type == tip_Event_Type::start || event.type == tip_Event_Type::tip_get_new_buffer_start)
         type = 'B';
-      else
+      else if(event.type == tip_Event_Type::stop || event.type == tip_Event_Type::tip_get_new_buffer_stop)
         type = 'E';
+      else
+        TIP_ASSERT(false && "Unhandled event type on the stack!");
 
       if(first)
         first = false;
