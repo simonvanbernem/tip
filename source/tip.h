@@ -288,6 +288,12 @@ struct tip_Dynamic_Array{
       size -= count;
   }
 
+  T pop_last(){
+    TIP_ASSERT(size > 0);
+    size--;
+    return data[size];
+  }
+
   T* begin(){
     return data;
   }
@@ -1503,10 +1509,6 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   fopen_s(&file, file_name, "w+");
   fprintf(file, "{\"traceEvents\": [\n");
 
-  bool first = true;
-
-  const double e6 = 1000000;
-
   uint64_t first_timestamp = uint64_t_max;
   for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     if(snapshot.events[thread_index].size > 0)
@@ -1516,46 +1518,42 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   tip_Dynamic_Array<tip_Event> event_stack;
   tip_Dynamic_Array<char> escaped_name_buffer;
 
+  bool first = true;
+  
   auto print_event_to_file = [&](const char* name, char ph, double ts, int32_t tid, const char* cat = nullptr, double dur = 0){
-    if(first)
-      first = false;
-    else
-      fprintf(file, ",\n");
+    if(!first) fprintf(file, ",\n");
+    first = false;
 
     fprintf(file, "  {\"name\":\"%s\",\"ph\":\"%c\",\"ts\":%.3f,\"pid\":%d,\"tid\":%d", name, ph, ts, snapshot.process_id, tid);
 
-    if(cat)
-      fprintf(file, ",\"cat\":\"%s\"", cat);
+    if(cat) fprintf(file, ",\"cat\":\"%s\"", cat);
 
-    if(ph == 'X')
-      fprintf(file, ",\"dur\":%.3f}", dur);
-    else if(ph == 'b' || ph == 'e')
-      fprintf(file, ",\"id\":1}");
-    else
-      fprintf(file, "}");
+    if(ph == 'X')                   fprintf(file, ",\"dur\":%.3f}", dur);
+    else if(ph == 'b' || ph == 'e') fprintf(file, ",\"id\":1}"         );
+    else                            fprintf(file, "}"                  );
   };
 
-  //the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by e6 (10^6). Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
-  auto timestamp_to_microseconds = [&](uint64_t timestamp){return double(timestamp - first_timestamp) * (e6 / snapshot.clocks_per_second);};
+  //the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by 10^6. Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
+  auto timestamp_to_microseconds = [&](uint64_t timestamp){return double(timestamp - first_timestamp) * (1000000 / snapshot.clocks_per_second);};
 
   for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     int32_t thread_id = snapshot.thread_ids[thread_index];
 
     for(tip_Event event : snapshot.events[thread_index]){
+      double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
+
       tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
       char* name = escaped_name_buffer.data;
-      double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
 
       switch(event.type){
         case tip_Event_Type::start:
         case tip_Event_Type::tip_get_new_buffer_start:{
-          //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
-          event_stack.insert(event);
-        }break;
+          event_stack.insert(event); //we put this event on the stack, so we can check if we can form duration events using this and its corresponding close event later
+        } break;
+
         case tip_Event_Type::stop:
         case tip_Event_Type::tip_get_new_buffer_stop:{
-          //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
-
+        //we check if the last thing on the stack is the corresponding start event for this stop event. if so, we merge both into a duration event and print it
           if(event_stack.size == 0
             || (event.type == tip_Event_Type::stop                    && event_stack[event_stack.size - 1].type != tip_Event_Type::start                   )
             || (event.type == tip_Event_Type::tip_get_new_buffer_stop && event_stack[event_stack.size - 1].type != tip_Event_Type::tip_get_new_buffer_start)){
@@ -1563,26 +1561,24 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
             continue; //there is no matching event
           }
 
-          tip_Event last_event_on_stack = event_stack[event_stack.size - 1];
-          event_stack.clear_last();
-
-          double start_time_in_ms = timestamp_to_microseconds(last_event_on_stack.timestamp);
+          double start_time_in_ms = timestamp_to_microseconds(event_stack.pop_last().timestamp);
           print_event_to_file(name, 'X', start_time_in_ms, thread_id, nullptr, timestamp_in_ms - start_time_in_ms);
-        }break;
+        } break;
+
         case tip_Event_Type::start_async:
-        case tip_Event_Type::stop_async:
-        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:
-        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:{
-
-          if(event.type == tip_Event_Type::start_async || event.type == tip_Event_Type::tip_recording_halted_because_of_memory_limit_start)
+        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:{
             print_event_to_file(name, 'b', timestamp_in_ms, thread_id, name);
-          else
-            print_event_to_file(name, 'e', timestamp_in_ms, thread_id, name);
+        } break;
 
-        }break;
+        case tip_Event_Type::stop_async:
+        case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:{
+          print_event_to_file(name, 'e', timestamp_in_ms, thread_id, name);
+        } break;
+
         case tip_Event_Type::event:{
           print_event_to_file(name, 'i', timestamp_in_ms, thread_id);
-        }break;
+        } break;
+
         default:{
           TIP_ASSERT(false && "Unhandled event type!");
         }
@@ -1594,11 +1590,21 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
       tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
       char* name = escaped_name_buffer.data;
 
-      if(event.type == tip_Event_Type::start || event.type == tip_Event_Type::tip_get_new_buffer_start)
-        print_event_to_file(name, 'B', timestamp_in_ms, thread_id, name);
-      else if(event.type == tip_Event_Type::stop || event.type == tip_Event_Type::tip_get_new_buffer_stop)
-        print_event_to_file(name, 'E', timestamp_in_ms, thread_id, name);
-      else TIP_ASSERT(false && "Unhandled event type on the stack!");
+      switch(event.type){
+        case tip_Event_Type::start:
+        case tip_Event_Type::tip_get_new_buffer_start:{
+          print_event_to_file(name, 'B', timestamp_in_ms, thread_id, name);
+        } break;
+
+        case tip_Event_Type::stop:
+        case tip_Event_Type::tip_get_new_buffer_stop:{
+          print_event_to_file(name, 'E', timestamp_in_ms, thread_id, name);
+        } break;
+
+        default:{
+          TIP_ASSERT(false && "unhandled event type on the stack!");
+        }
+      }
     }
 
     event_stack.clear();
