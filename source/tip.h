@@ -948,12 +948,10 @@ struct tip_Global_State{
   //To work around this, we use a second limit, the soft limit, that is lower than the hard limit. The core idea is that there is a maximum upper bound of how much we would overrun the limit, if the worst-case race-condition happened. That worst case race-condition is: we have exactly enough memory so that one thread can allocate a buffer, each thread does the check but gets swapped out for another one before it does the allocation, so that all threads end up thinking they can allocate, even though there is only enough room for one more allocation. So the maximum amount of memory we would overshoot the limit in the worst case race-condition is ((#threads - 1) * maximum allocation size). If we subtract that amount from the hard limit, we get our soft limit that guarantees us that we will not overrund the hard one, even in the worst case race condition. That way we avoid taking a critical section.
   //To actually make this happen, we have to know what the maximum allocation size can be. We only do two types of allocations: allocating an event buffer, of which the size is known and growing a dynamic array. To put an upper bound on the dynamic array growth, which normaly grows by a factor and thus has none, we introduce a limit in the data structure itsself.
   //Once an attempt to save a profiling zone hits the limit, we set a flag that prevents any other events from beeing recorded. Since each thread has different buffers, many other events might still be able to record, but it would be very confusing to just "miss" the events of one thread while the others keep going.
-  //@TODO there is still a race condition here that is not handled: if one thread hits the limit and is swapped out for another one that doesn't, that ones event will still be saved, with a possible later timestamp than the event that hit the limit. So maybe we should actually save the timestamp(s) when we ran out of memory (or had space available again) and discard any events after than on creating the snapshot. Since is a less important issue though, since it will never cause us to overrun the hard limit.
   volatile uint64_t occupied_memory;
   uint64_t hard_memory_limit;
   int64_t soft_memory_limit; //this can go negative if the hard limit is really low, and a new thread gets initialized. it will subtract TIP_EVENT_BUFFER_SIZE from this, which might be bigger than the hard limit itsself
-  bool stop_recording_because_an_allocation_hit_the_soft_limit = false;
-  bool try_to_start_recording_again_because_the_memory_limit_was_changed = false;
+  bool blocked_by_memory_limit = false; //if the soft limit is hit, we stop recording of any events, including those that wouldn't need an allocation, because it would be super confusing if some threads would continue on recording while another one doesn't
   Mutex record_memory_limit_events_mutex;
 #endif
 
@@ -971,17 +969,17 @@ static tip_Global_State tip_global_state;
 
 void tip_set_memory_limit(uint64_t limit_in_bytes){
 #ifdef TIP_MEMORY_LIMIT
-  tip_lock_mutex(tip_global_state.thread_states_mutex);
+  tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
   
   tip_global_state.hard_memory_limit = limit_in_bytes;
   tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
 
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit){
-    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = true;
-    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = false;
+  if(tip_global_state.blocked_by_memory_limit && int64_t(tip_global_state.occupied_memory + TIP_EVENT_BUFFER_SIZE) <= tip_global_state.soft_memory_limit){
+      tip_global_state.blocked_by_memory_limit = false;
+      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop);
   }
 
-  tip_unlock_mutex(tip_global_state.thread_states_mutex);
+  tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
 #else
   (void) limit_in_bytes;
 #endif
@@ -1053,23 +1051,22 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
 
 #ifdef TIP_MEMORY_LIMIT
 void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
+  if(tip_global_state.blocked_by_memory_limit)
     return nullptr;
 
   if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + difference_to_old_allocation_size) > tip_global_state.soft_memory_limit){
     if(tip_thread_state.initialized){
 
       tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-       //we check again because the value of stop_recording_because_an_allocation_hit_the_soft_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
-      if(!tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+       //we check again because the value of blocked_by_memory_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
+      if(!tip_global_state.blocked_by_memory_limit)
         tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
 
-      tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true; //this gets set here to avoid the race condition
+      tip_global_state.blocked_by_memory_limit = true; //this gets set here to avoid the race condition
       tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
     }
 
-    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
-    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
+    tip_global_state.blocked_by_memory_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
     return nullptr;
   }
 
@@ -1090,21 +1087,8 @@ bool tip_get_new_event_buffer(){
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) tip_try_malloc_with_respect_to_memory_limit(sizeof(tip_Event_Buffer));
   if(!new_buffer)
     return false;
-
-  if(tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed){
-    tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-
-    //we check again because the value of try_to_start_recording_again_because_the_memory_limit_was_changed might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
-    if(tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed){
-      tip_save_profile_event_without_checks(get_buffer_start_time, nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop);
-      tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
-    }
-
-    tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
-  }
-
 #else
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*)TIP_MALLOC(sizeof(tip_Event_Buffer));
+  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
 #endif
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
@@ -1202,7 +1186,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
     return;
 
 #ifdef TIP_MEMORY_LIMIT
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
+  if(tip_global_state.blocked_by_memory_limit)
     return;
 #endif
 

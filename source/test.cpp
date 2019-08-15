@@ -139,7 +139,7 @@ void main(){
 #define TIP_USE_RDTSC
 #define TIP_IMPLEMENTATION
 #define TIP_EVENT_BUFFER_SIZE 1024 * 1024
-// #define TIP_MEMORY_LIMIT
+#define TIP_MEMORY_LIMIT
 #include "tip.h"
 
 void main(){
