@@ -920,11 +920,10 @@ uint64_t tip_get_reliable_timestamp_frequency(){
 #include <intrin.h>
 
 struct tip_Event_Buffer{
-  uint8_t* data;
-  uint8_t* end;
   uint8_t* current_position;
   uint8_t* position_of_first_event; //this is used to delete events from a buffer when making a snapshot
   tip_Event_Buffer* next_buffer;
+  uint8_t data[TIP_EVENT_BUFFER_SIZE];
 };
 
 struct tip_Thread_State{
@@ -1053,7 +1052,7 @@ bool tip_get_global_toggle() {
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
 
 #ifdef TIP_MEMORY_LIMIT
-void* tip_try_malloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
+void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
   if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
     return nullptr;
 
@@ -1092,10 +1091,6 @@ bool tip_get_new_event_buffer(){
   if(!new_buffer)
     return false;
 
-  new_buffer->data = (uint8_t*) tip_try_malloc_with_respect_to_memory_limit(TIP_EVENT_BUFFER_SIZE);
-  if(!new_buffer->data)
-    return false;
-
   if(tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed){
     tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
 
@@ -1110,10 +1105,7 @@ bool tip_get_new_event_buffer(){
 
 #else
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*)TIP_MALLOC(sizeof(tip_Event_Buffer));
-  new_buffer->data = (uint8_t*)TIP_MALLOC(TIP_EVENT_BUFFER_SIZE);
 #endif
-
-  new_buffer->end = new_buffer->data + TIP_EVENT_BUFFER_SIZE;
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
   new_buffer->next_buffer = nullptr;
@@ -1168,7 +1160,7 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
 
   buffer->current_position = data_pointer;
 
-  TIP_ASSERT(buffer->current_position <= buffer->end);
+  TIP_ASSERT(buffer->current_position <= buffer->data + TIP_EVENT_BUFFER_SIZE);
 }
 
 double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size){
@@ -1226,7 +1218,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
   TIP_ASSERT(event_size + tip_info_event_size * 4 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TUP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
 
   //we add tip_info_event_size here, because we will need to be able to record a tip_recording_halted_because_of_memory_limit_start info event into this buffer, if the allocation of the next one fails
-  if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->end){
+  if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->data + TIP_EVENT_BUFFER_SIZE){
 
 #ifdef TIP_MEMORY_LIMIT
     bool got_new_buffer = tip_get_new_event_buffer();
@@ -1384,7 +1376,6 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
         }
         else{
           tip_Event_Buffer* next_buffer = event_buffer->next_buffer;
-          TIP_FREE(event_buffer->data);
           TIP_FREE(event_buffer);
           thread_state->first_event_buffer = next_buffer;
           event_buffer = next_buffer;
