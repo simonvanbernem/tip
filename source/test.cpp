@@ -71,7 +71,7 @@ void main(){
 
 }
 #endif
-#define e3
+#define e2
 
 #ifdef e1
 #define TIP_AUTO_INIT //make TIP take care of initialization
@@ -135,31 +135,35 @@ void main(){
 
 #ifdef e3
 
+#define TIP_WINDOWS
+#define TIP_USE_RDTSC
 #define TIP_IMPLEMENTATION
-#define TIP_EVENT_BUFFER_SIZE 1024
-#define TIP_MEMORY_LIMIT
+#define TIP_EVENT_BUFFER_SIZE 1024 * 1024
+// #define TIP_MEMORY_LIMIT
 #include "tip.h"
 
 void main(){
   tip_global_init();
-  tip_set_memory_limit(128 * 1024);
+  tip_set_memory_limit(16 * 1024 * 1024);
   tip_thread_init();
 
-  for(int i = 0; i < 10000; i++){
+  for(int i = 0; i < 1000; i++){
     TIP_PROFILE_SCOPE("scope1");
     for(int j = 0; j < 1000; j++) {
       TIP_PROFILE_SCOPE("scope2");
     }
-    if (i == 3000)
-      tip_set_memory_limit(5 * 1024 * 1024);
-    if (i == 7000)
-      tip_set_memory_limit(0);
-    if (i == 8000)
-      tip_set_memory_limit(128 * 1024);
+    // if (i == 3000)
+    //   tip_set_memory_limit(5 * 1024 * 1024);
+    // if (i == 7000)
+    //   tip_set_memory_limit(0);
+    // if (i == 8000)
+    //   tip_set_memory_limit(128 * 1024);
   }
 
-  printf("%.3fKiB/%.3fKiB used.", double(tip_get_current_memory_footprint()) / 1024., double(tip_get_memory_limit()) / 1024.);
+  printf("%.3fKiB/%.3fKiB used.\n", double(tip_get_current_memory_footprint()) / 1024., double(tip_get_memory_limit()) / 1024.);
 
+  tip_set_memory_limit(0);
+  printf("Average duration of a single profiling event is %fns.\n", tip_measure_average_duration_of_recording_a_single_profiling_event() * 1000000000.);
   tip_export_state_to_chrome_json("profiling_data.json");
 }
 
