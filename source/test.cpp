@@ -71,7 +71,7 @@ void main(){
 
 }
 #endif
-#define e2
+#define e3
 
 #ifdef e1
 #define TIP_AUTO_INIT //make TIP take care of initialization

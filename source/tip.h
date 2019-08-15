@@ -670,9 +670,9 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
 
 #ifndef TIP_GLOBAL_TOGGLE
-  #define TIP_PROFILE_SCOPE(name) tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test");
+  #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true);
   #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, condition);
-  #define TIP_PROFILE_FUNCTION() tip_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__);
+  #define TIP_PROFILE_FUNCTION() tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true);
 
   #define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);
   #define TIP_PROFILE_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop);
@@ -697,58 +697,26 @@ TIP_API uint64_t tip_get_timestamp();
 TIP_API int64_t tip_scoped_profiler_push_name(const char* data, uint64_t size);
 TIP_API char* tip_scoped_profiler_pop_name(uint64_t index);
 
-struct tip_Scope_Profiler{
-  int64_t name_identifier;
-  uint64_t length_including_null;
-  tip_Scope_Profiler(const char* event_name){
-    length_including_null = tip_strlen(event_name) + 1;
-    name_identifier = tip_scoped_profiler_push_name(event_name, length_including_null);
-  
-#ifdef TIP_MEMORY_LIMIT
-    if(name_identifier == -1)
-      return;
-#endif
-    tip_save_profile_event(tip_get_timestamp(), event_name, length_including_null, tip_Event_Type::start);
-  }
-
-  ~tip_Scope_Profiler(){
-#ifdef TIP_MEMORY_LIMIT
-    if(name_identifier == -1)
-      return;
-#endif
-    tip_save_profile_event(tip_get_timestamp(), tip_scoped_profiler_pop_name(name_identifier), length_including_null, tip_Event_Type::stop);
-  }
-};
-
 struct tip_Conditional_Scope_Profiler{
-  bool condition;
-  int64_t name_identifier;
-  uint64_t length_including_null;
-  tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition){
-    condition = new_condition;
+  int64_t name_identifier_or_condition = -1; //if this is negative, either we hit the memory limit or the condition wasn't true. In either case we don't record the profiling event. If the value is positive, it represents the identifier for the name to use in the scoped profiler name stack
+  uint64_t length_including_null = 0;
+  tip_Conditional_Scope_Profiler(const char* event_name, bool condition){
+    if(condition){
+      length_including_null = tip_strlen(event_name) + 1;
+      name_identifier_or_condition = tip_scoped_profiler_push_name(event_name, length_including_null);
+     
+      if(name_identifier_or_condition == -1)
+        return;
 
-    if(!condition)
-      return;
-
-    length_including_null = tip_strlen(event_name) + 1;
-    name_identifier = tip_scoped_profiler_push_name(event_name, length_including_null);
-
-#ifdef TIP_MEMORY_LIMIT
-    if(name_identifier == -1)
-      return;
-#endif
-    tip_save_profile_event(tip_get_timestamp(), event_name, length_including_null, tip_Event_Type::start);
+      tip_save_profile_event(tip_get_timestamp(), event_name, length_including_null, tip_Event_Type::start);
+    }
   }
 
   ~tip_Conditional_Scope_Profiler(){
-    if(!condition)
+    if(name_identifier_or_condition == -1)
       return;
 
-#ifdef TIP_MEMORY_LIMIT
-    if(name_identifier == -1)
-      return;
-#endif
-    tip_save_profile_event(tip_get_timestamp(), tip_scoped_profiler_pop_name(name_identifier), length_including_null, tip_Event_Type::stop);
+    tip_save_profile_event(tip_get_timestamp(), tip_scoped_profiler_pop_name(name_identifier_or_condition), length_including_null, tip_Event_Type::stop);
   }
 };
 
@@ -1085,18 +1053,18 @@ bool tip_get_global_toggle() {
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
 
 #ifdef TIP_MEMORY_LIMIT
-void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
+void* tip_try_malloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
   if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
     return nullptr;
 
-  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + allocation_size) > tip_global_state.soft_memory_limit){
+  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + difference_to_old_allocation_size) > tip_global_state.soft_memory_limit){
     if(tip_thread_state.initialized){
 
       tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
        //we check again because the value of stop_recording_because_an_allocation_hit_the_soft_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
-      if(!tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit){
+      if(!tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit)
         tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
-      }
+
       tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true; //this gets set here to avoid the race condition
       tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
     }
@@ -1106,27 +1074,14 @@ void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
     return nullptr;
   }
 
-  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, allocation_size);
-  return TIP_MALLOC(allocation_size);
+  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, difference_to_old_allocation_size);
+  return TIP_REALLOC(previous_allocation, allocation_size);
 }
 
-void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t new_allocation_size, uint64_t growth_over_old_allocation_size){
-  if(tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit && !tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed)
-    return nullptr;
-
-  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + growth_over_old_allocation_size) > tip_global_state.soft_memory_limit){
-    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true;
-    if(tip_thread_state.initialized)
-      tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
-
-    tip_global_state.stop_recording_because_an_allocation_hit_the_soft_limit = true;
-    tip_global_state.try_to_start_recording_again_because_the_memory_limit_was_changed = false;
-    return nullptr;
-  }
-
-  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, growth_over_old_allocation_size);
-  return TIP_REALLOC(previous_allocation, new_allocation_size);
+void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
+  return tip_try_realloc_with_respect_to_memory_limit(nullptr, allocation_size, allocation_size);
 }
+
 #endif
 
 bool tip_get_new_event_buffer(){
@@ -1501,7 +1456,8 @@ int64_t tip_export_state_to_chrome_json(char* file_name, bool profile_export_and
 }
 
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name, bool profile_export_and_include_in_the_output){
-  const uint64_t uint64_t_max = 18446744073709551615llu; // uint64_t max (a.k.a 2^64 - 1)
+  if(snapshot.number_of_events == 0)
+    return 0;
 
   uint64_t export_start_time = tip_get_timestamp();
 
@@ -1509,7 +1465,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   fopen_s(&file, file_name, "w+");
   fprintf(file, "{\"traceEvents\": [\n");
 
-  uint64_t first_timestamp = uint64_t_max;
+  uint64_t first_timestamp = snapshot.events[0][0].timestamp;
+
   for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     if(snapshot.events[thread_index].size > 0)
       first_timestamp = tip_min(first_timestamp, snapshot.events[thread_index][0].timestamp);
@@ -1585,7 +1542,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
       }
     }
 
-    for(tip_Event event : event_stack){ //print all start and stop events, that don't have a corresponding event they could form a duration event with
+    //print all start and stop events that don't have a corresponding event they could form a duration event with
+    for(tip_Event event : event_stack){
       double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
       tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
       char* name = escaped_name_buffer.data;
