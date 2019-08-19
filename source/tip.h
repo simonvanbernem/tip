@@ -1042,10 +1042,8 @@ TIP_API uint64_t tip_get_current_memory_footprint(){
   tip_lock_mutex(tip_global_state.thread_states_mutex);
 
   for(auto thread_state : tip_global_state.thread_states){
-    occupied_memory += thread_state->scoped_profiling_name_stack.capacity * sizeof(char);
-
     for(auto event_buffer = thread_state->first_event_buffer; event_buffer; event_buffer = event_buffer->next_buffer)
-      occupied_memory += sizeof(tip_Event_Buffer) + TIP_EVENT_BUFFER_SIZE;
+      occupied_memory += TIP_EVENT_BUFFER_SIZE;
   }
 
   tip_unlock_mutex(tip_global_state.thread_states_mutex);
