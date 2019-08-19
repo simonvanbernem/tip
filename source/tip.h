@@ -203,10 +203,10 @@ struct tip_Dynamic_Array{
   uint64_t capacity = 0;
   uint64_t max_growth_size = 0; //0 means unlimited growth and this array wont count towards the memory limit
 
-  void init(uint64_t initial_capacity, uint64_t initial_max_growth_size = 0){
+  bool init(uint64_t initial_capacity, uint64_t initial_max_growth_size = 0){
     max_growth_size = initial_max_growth_size;
-    grow_to_exact_capacity(initial_capacity);
     size = 0;
+    return grow_to_exact_capacity(initial_capacity);
   }
 
   bool grow_to_exact_capacity(uint64_t new_capacity){
@@ -225,7 +225,7 @@ struct tip_Dynamic_Array{
     else {
       while (growth_size > 0) {
         uint64_t growth_size_this_step = tip_min(growth_size, max_growth_size);
-        data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, sizeof(T) * capacity, growth_size_this_step);
+        data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
 
         if (!data)
           return false;
@@ -267,6 +267,13 @@ struct tip_Dynamic_Array{
     return true;
   }
 
+  tip_Dynamic_Array<T> get_copy(){
+    tip_Dynamic_Array<T> copy;
+    copy.init(size, max_growth_size);
+    copy.insert(data, size);
+    return copy;
+  }
+
   bool insert(T* elements, uint64_t number_of_elements){
     if(!grow_if_necessairy(number_of_elements))
       return false;
@@ -286,6 +293,18 @@ struct tip_Dynamic_Array{
   void clear_last(uint64_t count = 1){
     if(size >= count)
       size -= count;
+  }
+
+  void ordered_remove(uint64_t index, uint64_t count = 1){
+    if(count == 0)
+      return;
+
+    assert((index + count <= size) && "You cannot remove past the end of the array!");
+
+    if(index != size - count)
+      memcpy(data + index, data + index + count, ((size - count) - index) * sizeof(T));
+
+    size -= count;
   }
 
   T pop_last(){
@@ -435,6 +454,7 @@ enum class tip_Event_Type{
 struct tip_Event{
   uint64_t timestamp;
   int64_t name_id = -1; //I think this cant be unsigned, because of the string interning hashtable, I don't know though, might be wrong on this.
+  uint64_t categories;
   tip_Event_Type type;
 };
 
@@ -448,6 +468,10 @@ struct tip_Snapshot{
   tip_String_Interning_Hash_Table names;
   tip_Dynamic_Array<uint32_t> thread_ids;
   tip_Dynamic_Array<tip_Dynamic_Array<tip_Event>> events; // the inner array contains the events of one thread.
+  
+  int64_t category_name_indices[64];
+  tip_Dynamic_Array<char> category_name_buffer;
+
 };
 
 //------------------------------------------------------------------------------
@@ -494,17 +518,19 @@ TIP_API bool tip_thread_init();
 TIP_API void tip_set_global_toggle(bool toggle);
 // If TIP_GLOBAL_TOGGLE is defined, this function sets the state
 // global toggle. Otherwise, this function does nothing.
-// The global state need not be initialized to set the global toggle.
+// The global state doesn't need to be initialized to set the global toggle.
 
 TIP_API bool tip_set_global_toggle_after_delay(bool toggle, double delay_in_seconds);
-// If TIP_GLOBAL_TOGGLE is defined, this function sets the state
-// of the global toggle on the first attempt to record a profiling zone, after the delay  after the delay. . Otherwise, this function does nothing.
-// The global state needs to be initialized to set the global toggle.
+// If TIP_GLOBAL_TOGGLE is defined, this function sets the state of the global
+// toggle on the first attempt to record a profiling zone, after the delay has
+// passed. Otherwise, this function does nothing. The zone that triggers this
+// will be evaluated against the new value of the toggle. The global state 
+// doesn't need to be initialized to set the global toggle after a delay.
 
 TIP_API bool tip_get_global_toggle();
 // If TIP_GLOBAL_TOGGLE is defined, this function returns the
 // current state of the global toggle. Otherwise, this function return true.
-// The global state need not be initialized to query the global toggle.
+// The global state doesn't need to be initialized to query the global toggle.
 
 //------------------------------------------------------------------------------
 TIP_API void tip_set_memory_limit(uint64_t limit_in_bytes);
@@ -539,7 +565,14 @@ TIP_API uint64_t tip_get_current_memory_footprint();
 // category filter and the category value. This means each category should be a
 // power of two, since the filter is a bitmask. You can create filters that let
 // multiple categories pass, by ORing these categories together. That way, you
-// can also create profiling zones that blong to multiple categories.
+// can also create profiling zones that blong to multiple categories. Categories
+// also get included in the output and may be usefull in your frontend.
+//
+// TIP uses the highest category (2^64-1 or 1 << 63) for events that are
+// generated for the internals of the profiler. These can be, for example, zones
+// that show when TIP allocates a new buffer for events, or is blocked by the
+// memory limit. You are free to issue events with this category aswell, or to
+// change its name.
 
 TIP_API void tip_set_category_filter(uint64_t bitmask);
 // Sets the category filter. Any attempt to record a profiling zone will be
@@ -553,6 +586,9 @@ TIP_API uint64_t tip_get_category_filter();
 TIP_API bool tip_does_category_pass_filter(uint64_t category);
 // Returns true if the category passes the current category filter,
 // returns false otherwise. This is simply a bitwise AND.
+
+TIP_API bool tip_set_category_name(uint64_t category, const char* category_name);
+// Sets the name of a certain category. This name may be usefull for a frontend.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -670,45 +706,51 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
 
 #ifndef TIP_GLOBAL_TOGGLE
-  #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true);
-  #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, condition);
-  #define TIP_PROFILE_FUNCTION() tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true);
+  #define TIP_PROFILE_SCOPE(name, categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true, categories); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true);
+  #define TIP_PROFILE_SCOPE_COND(name, categories, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, condition, categories);
+  #define TIP_PROFILE_FUNCTION(categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
 
-  #define TIP_PROFILE_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);
-  #define TIP_PROFILE_STOP() tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::stop);
+  #define TIP_PROFILE_START(name, categories) tip_save_profile_event(name, tip_Event_Type::start, categories);
+  #define TIP_PROFILE_STOP(categories) tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
 
-  #define TIP_PROFILE_ASYNC_START(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start_async);
-  #define TIP_PROFILE_ASYNC_STOP(name) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop_async);
+  #define TIP_PROFILE_ASYNC_START(name, categories) tip_save_profile_event(name, tip_Event_Type::start_async, categories);
+  #define TIP_PROFILE_ASYNC_STOP(name, categories) tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
 #else
-  #define TIP_PROFILE_SCOPE(name) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle());
-  #define TIP_PROFILE_SCOPE_COND(name, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, tip_get_global_toggle() && condition);
-  #define TIP_PROFILE_FUNCTION() tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(__FUNCTION__, tip_get_global_toggle());
+  #define TIP_PROFILE_SCOPE(name, categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle(), categories);
+  #define TIP_PROFILE_SCOPE_COND(name, categories, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __line__)(name, tip_get_global_toggle() && condition, categories);
+  #define TIP_PROFILE_FUNCTION(categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(__FUNCTION__, tip_get_global_toggle(), categories);
 
-  #define TIP_PROFILE_START(name) {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start);}
-  #define TIP_PROFILE_STOP() {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::stop);}
+  #define TIP_PROFILE_START(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::start, categories);}
+  #define TIP_PROFILE_STOP(categories) {if(tip_get_global_toggle()) tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);}
 
-  #define TIP_PROFILE_ASYNC_START(name) {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::start_async);}
-  #define TIP_PROFILE_ASYNC_STOP(name) {if(tip_get_global_toggle()) tip_save_profile_event(tip_get_timestamp(), name, tip_strlen(name) + 1, tip_Event_Type::stop_async);}
+  #define TIP_PROFILE_ASYNC_START(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::start_async, categories);}
+  #define TIP_PROFILE_ASYNC_STOP(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::stop_async, categories);}
 #endif
 
-TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
+const uint64_t tip_info_category = 1llu << 63;
+const uint64_t tip_all_categories = UINT64_MAX;
+
+TIP_API void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories); //uses the current time, calculates strlen
+TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 TIP_API uint64_t tip_get_timestamp();
 
 TIP_API int64_t tip_scoped_profiler_push_name(const char* data, uint64_t size);
 TIP_API char* tip_scoped_profiler_pop_name(uint64_t index);
 
 struct tip_Conditional_Scope_Profiler{
-  int64_t condition = false; //if this is negative, either we hit the memory limit or the condition wasn't true. In either case we don't record the profiling event. If the value is positive, it represents the identifier for the name to use in the scoped profiler name stack
-  tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition){
+  int64_t condition = false;
+  uint64_t categories;
+  tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition, uint64_t new_categories){
     if(new_condition){
-      tip_save_profile_event(tip_get_timestamp(), event_name, tip_strlen(event_name) + 1, tip_Event_Type::start);
+      tip_save_profile_event(tip_get_timestamp(), event_name, tip_strlen(event_name) + 1, tip_Event_Type::start, new_categories);
       condition = true;
+      categories = new_categories;
     }
   }
 
   ~tip_Conditional_Scope_Profiler(){
     if(condition)
-      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::stop);
+      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::stop, categories);
   }
 };
 
@@ -933,6 +975,10 @@ struct tip_Thread_State{
 struct tip_Global_State{
   bool initialized = false;
 
+  uint64_t category_filter = 0;
+  tip_Dynamic_Array<char> category_name_buffer;
+  int64_t category_name_indices[64]; //for each category possible (64 bits so 64 categories), contains the index to the start of this categories name in the category_name_buffer (or -1 if no name)
+
 #ifdef TIP_GLOBAL_TOGGLE
   bool toggle = false;
 #endif
@@ -970,7 +1016,7 @@ void tip_set_memory_limit(uint64_t limit_in_bytes){
 
   if(tip_global_state.blocked_by_memory_limit && int64_t(tip_global_state.occupied_memory + TIP_EVENT_BUFFER_SIZE) <= tip_global_state.soft_memory_limit){
       tip_global_state.blocked_by_memory_limit = false;
-      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop);
+      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop, tip_info_category);
   }
 
   tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
@@ -1025,7 +1071,53 @@ bool tip_get_global_toggle() {
 #endif
 }
 
-void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type);
+void tip_set_category_filter(uint64_t bitmask){
+  tip_global_state.category_filter = bitmask;
+}
+
+uint64_t tip_get_category_filter(){
+  return tip_global_state.category_filter;
+}
+
+bool tip_does_category_pass_filter(uint64_t category){
+  return category & tip_global_state.category_filter;
+}
+
+bool tip_set_category_name(uint64_t category_id, const char* category_name){
+  for(uint64_t i = 0; i < 64; i++){
+    if(1llu << i == category_id){
+      
+      //remove previous name from buffer and fix the other names indices since they would maybe move around in the buffer
+      int64_t previous_name_index = tip_global_state.category_name_indices[i];
+      if(previous_name_index != -1){
+        auto previous_name_length = strlen(&tip_global_state.category_name_buffer[previous_name_index]) + 1;
+        tip_global_state.category_name_buffer.ordered_remove(previous_name_index, previous_name_length);
+
+        for(uint64_t j = 0; j < 64; j++){
+          if(tip_global_state.category_name_indices[j] > previous_name_index)
+            tip_global_state.category_name_indices[j] -= previous_name_length;
+        }
+
+        tip_global_state.category_name_indices[i] = -1;
+      }
+
+      uint64_t name_index = tip_global_state.category_name_buffer.size;
+     
+      if(!tip_global_state.category_name_buffer.insert((char*) category_name, strlen(category_name) + 1))
+        return false;
+
+      tip_global_state.category_name_indices[i] = name_index;
+      return true;
+    }
+  }
+
+  TIP_ASSERT(false && "Category-IDs have to be powers of two! They will be bitmasked later, and that way you can OR them together in your events or filters");
+  return false;
+}
+
+
+
+void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 
 #ifdef TIP_MEMORY_LIMIT
 void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
@@ -1038,7 +1130,7 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
       tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
        //we check again because the value of blocked_by_memory_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
       if(!tip_global_state.blocked_by_memory_limit)
-        tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start);
+        tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start, tip_info_category);
 
       tip_global_state.blocked_by_memory_limit = true; //this gets set here to avoid the race condition
       tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
@@ -1081,8 +1173,8 @@ bool tip_get_new_event_buffer(){
 
   auto get_buffer_end_time = tip_get_timestamp();
 
-  tip_save_profile_event_without_checks(get_buffer_start_time, nullptr, 0, tip_Event_Type::tip_get_new_buffer_start);
-  tip_save_profile_event_without_checks(get_buffer_end_time  , nullptr, 0, tip_Event_Type::tip_get_new_buffer_stop);
+  tip_save_profile_event_without_checks(get_buffer_start_time, nullptr, 0, tip_Event_Type::tip_get_new_buffer_start, tip_info_category);
+  tip_save_profile_event_without_checks(get_buffer_end_time  , nullptr, 0, tip_Event_Type::tip_get_new_buffer_stop, tip_info_category);
 
   return true;
 }
@@ -1102,7 +1194,7 @@ bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defi
   #endif
 }
 
-void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type) {
+void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories) {
   tip_Event_Buffer* buffer = tip_thread_state.current_event_buffer;
   
   TIP_ASSERT(buffer);
@@ -1112,6 +1204,8 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
   data_pointer += sizeof(timestamp);
   *((tip_Event_Type*)data_pointer) = type;
   data_pointer += sizeof(type);
+  *((uint64_t*)data_pointer) = categories;
+  data_pointer += sizeof(categories);
 
   if(!is_type_info_event(type) && type != tip_Event_Type::stop){
     *((uint64_t*)data_pointer) = name_length_including_terminator;
@@ -1141,7 +1235,7 @@ double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64
 
     auto measurement_start = tip_get_timestamp();
     for(uint64_t i = 0; i < sample_size / 2; i++){
-      TIP_PROFILE_SCOPE("TIP test measurement");
+      TIP_PROFILE_SCOPE("TIP test measurement", 1);
       for(uint64_t j = 0; j < 1000; j++)
         dummy_variable_for_measurement++;
     }
@@ -1157,8 +1251,17 @@ double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64
   return -1;
 }
 
-void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type){
-  const uint64_t tip_info_event_size = sizeof(timestamp) + sizeof(type);
+void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories){
+  auto timestamp = tip_get_timestamp();
+  uint64_t name_length_including_terminator = 0;
+  if(name)
+    name_length_including_terminator = strlen(name) + 1;
+
+  tip_save_profile_event(timestamp, name, name_length_including_terminator, type, categories);
+}
+
+void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories){
+  const uint64_t tip_info_event_size = sizeof(timestamp) + sizeof(type) + sizeof(categories);
 
   if(!tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined())
     return;
@@ -1172,17 +1275,17 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
     return;
   }
 
-  if(tip_thread_state.event_balance_during_blocked != 0){
+  if(tip_thread_state.event_balance_during_blocked != 0){ //@BUG @TODO @RACE CONDITION
     int64_t balance = tip_thread_state.event_balance_during_blocked;
     tip_thread_state.event_balance_during_blocked = 0;
     if(balance > 0){
       for(int64_t i = 0; i < balance; i++)
-        tip_save_profile_event(timestamp, nullptr, 0, tip_Event_Type::stop);
+        tip_save_profile_event(timestamp, nullptr, 0, tip_Event_Type::stop, tip_all_categories);
     }
     else{
       const char* temp_name = "UNKNOWN ZONE";
       for(int64_t i = 0; i > balance; i--)
-        tip_save_profile_event(timestamp, temp_name, tip_strlen(temp_name), tip_Event_Type::start);
+        tip_save_profile_event(timestamp, temp_name, tip_strlen(temp_name) + 1, tip_Event_Type::start, tip_all_categories);
     }
   }
 #endif
@@ -1192,11 +1295,11 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
   if(is_type_info_event(type))
     event_size = tip_info_event_size;
   else
-    event_size = sizeof(timestamp) + sizeof(type) + sizeof(name_length_including_terminator) + name_length_including_terminator;
+    event_size = sizeof(timestamp) + sizeof(type) + sizeof(categories) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 
   // we need enough space in each new buffer to store at least four info events (if TIP_MEMORY_LIMIT is defined, 2 otherwise), besides the user-event in it:
   // tip_get_new_buffer_start, tip_get_new_buffer_stop, tip_recording_halted_because_of_memory_limit_start and tip_recording_halted_because_of_memory_limit_stop
-  TIP_ASSERT(event_size + tip_info_event_size * 4 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TUP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
+  TIP_ASSERT(event_size + tip_info_event_size * 4 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TIP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
 
   //we add tip_info_event_size here, because we will need to be able to record a tip_recording_halted_because_of_memory_limit_start info event into this buffer, if the allocation of the next one fails
   if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->data + TIP_EVENT_BUFFER_SIZE){
@@ -1212,7 +1315,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 #endif
   }
 
-  tip_save_profile_event_without_checks(timestamp, name, name_length_including_terminator, type);
+  tip_save_profile_event_without_checks(timestamp, name, name_length_including_terminator, type, categories);
 }
 
 bool tip_thread_init(){
@@ -1275,9 +1378,18 @@ double tip_global_init(){
   tip_global_state.occupied_memory = 0;
   tip_global_state.soft_memory_limit = 0;
   tip_global_state.hard_memory_limit = 0;
-  tip_global_state.thread_states.init(50, TIP_EVENT_BUFFER_SIZE);
+  tip_global_state.thread_states.init(50, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice on thread init
+  tip_global_state.category_name_buffer.init(500, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice when trying to insert the name
+  
   tip_global_state.record_memory_limit_events_mutex = tip_create_mutex();
 #endif
+
+  for(uint64_t i = 0; i < 64; i++)
+    tip_global_state.category_name_indices[i] = -1;
+
+  //default category is 1 << 63, so the highest bit.
+  if(tip_global_state.category_name_buffer.insert("TIP info", tip_strlen("TIP info") + 1))
+    tip_global_state.category_name_indices[63] = 0;
 
   tip_global_state.process_id = tip_get_process_id();
   tip_global_state.initialized = true;
@@ -1296,6 +1408,8 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
   snapshot.clocks_per_second = tip_global_state.clocks_per_second;
   snapshot.process_id = tip_global_state.process_id;
   snapshot.names.init(256);
+  memcpy(snapshot.category_name_indices, tip_global_state.category_name_indices, sizeof(tip_global_state.category_name_indices));
+  snapshot.category_name_buffer.insert(tip_global_state.category_name_buffer.data, tip_global_state.category_name_buffer.size);
 
   tip_lock_mutex(tip_global_state.thread_states_mutex);
 
@@ -1316,6 +1430,8 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
         data_pointer += sizeof(event.timestamp);
         event.type = *((tip_Event_Type*)data_pointer);
         data_pointer += sizeof(event.type);
+        event.categories = *((uint64_t*)data_pointer);
+        data_pointer += sizeof(event.categories);
 
         if(!is_type_info_event(event.type)){
           if (event.type != tip_Event_Type::stop) {
@@ -1449,13 +1565,40 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 
   bool first = true;
   
-  auto print_event_to_file = [&](const char* name, char ph, double ts, int32_t tid, const char* cat = nullptr, double dur = 0){
+  auto print_event_to_file = [&](const char* name, uint64_t categories, char ph, double ts, int32_t tid, double dur = 0){
     if(!first) fprintf(file, ",\n");
     first = false;
 
-    fprintf(file, "  {\"name\":\"%s\",\"ph\":\"%c\",\"ts\":%.3f,\"pid\":%d,\"tid\":%d", name, ph, ts, snapshot.process_id, tid);
+    fprintf(file, "  {\"name\":\"%s\",\"ph\":\"%c\",\"ts\":%.3f,\"pid\":%d,\"tid\":%d,\"cat\":\"", name, ph, ts, snapshot.process_id, tid);
 
-    if(cat) fprintf(file, ",\"cat\":\"%s\"", cat);
+    bool first_category = true;
+
+    for(uint64_t i = 0; categories >= (1llu << i) && i < 64; i++){
+      if((1llu << i) & categories){
+
+        if(snapshot.category_name_indices[i] != -1){
+          tip_escape_string_for_json(&snapshot.category_name_buffer[snapshot.category_name_indices[i]], &escaped_name_buffer);
+
+          if(first_category){
+            fprintf(file, "%s", escaped_name_buffer.data);
+            first_category = false;
+          }
+          else
+            fprintf(file, ",%s", escaped_name_buffer.data);
+        }
+        else{
+          if(first_category){
+            fprintf(file, "%llu", i);
+            first_category = false;
+          }
+          else
+            fprintf(file, ",%llu", i);
+        }
+      }
+    }
+
+    fprintf(file, "\"");
+
 
     if(ph == 'X')                   fprintf(file, ",\"dur\":%.3f}", dur);
     else if(ph == 'b' || ph == 'e') fprintf(file, ",\"id\":1}"         );
@@ -1470,9 +1613,8 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 
     for(tip_Event event : snapshot.events[thread_index]){
       double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
-
       tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
-      char* name = escaped_name_buffer.data;
+      const char* name = &escaped_name_buffer[0];
 
       switch(event.type){
         case tip_Event_Type::start:
@@ -1486,30 +1628,30 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
           if(event_stack.size == 0
             || (event.type == tip_Event_Type::stop                    && event_stack[event_stack.size - 1].type != tip_Event_Type::start                   )
             || (event.type == tip_Event_Type::tip_get_new_buffer_stop && event_stack[event_stack.size - 1].type != tip_Event_Type::tip_get_new_buffer_start)){
-            print_event_to_file("UNKNOWN STOP EVENT", 'i', timestamp_in_ms, thread_id);
+            print_event_to_file("UNKNOWN STOP EVENT", event.categories, 'i', timestamp_in_ms, thread_id);
             continue; //there is no matching event
           }
           
           auto start_event = event_stack.pop_last();
           tip_escape_string_for_json(snapshot.names.get_string(start_event.name_id), &escaped_name_buffer);
-          name = escaped_name_buffer.data;
+          name = &escaped_name_buffer[0];
 
           double start_time_in_ms = timestamp_to_microseconds(start_event.timestamp);
-          print_event_to_file(name, 'X', start_time_in_ms, thread_id, nullptr, timestamp_in_ms - start_time_in_ms);
+          print_event_to_file(name, event.categories, 'X', start_time_in_ms, thread_id, timestamp_in_ms - start_time_in_ms);
         } break;
 
         case tip_Event_Type::start_async:
         case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:{
-            print_event_to_file(name, 'b', timestamp_in_ms, thread_id, name);
+          print_event_to_file(name, event.categories, 'b', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::stop_async:
         case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:{
-          print_event_to_file(name, 'e', timestamp_in_ms, thread_id, name);
+          print_event_to_file(name, event.categories, 'e', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::event:{
-          print_event_to_file(name, 'i', timestamp_in_ms, thread_id);
+          print_event_to_file(name, event.categories, 'i', timestamp_in_ms, thread_id);
         } break;
 
         default:{
@@ -1527,12 +1669,12 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
       switch(event.type){
         case tip_Event_Type::start:
         case tip_Event_Type::tip_get_new_buffer_start:{
-          print_event_to_file(name, 'B', timestamp_in_ms, thread_id, name);
+          print_event_to_file(name, event.categories, 'B', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::stop:
         case tip_Event_Type::tip_get_new_buffer_stop:{
-          print_event_to_file(name, 'E', timestamp_in_ms, thread_id, name);
+          print_event_to_file(name, event.categories, 'E', timestamp_in_ms, thread_id);
         } break;
 
         default:{
@@ -1550,7 +1692,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   if(profile_export_and_include_in_the_output){
     auto start_time_in_ms = timestamp_to_microseconds(export_start_time);
     auto end_time_in_ms = timestamp_to_microseconds(tip_get_timestamp());
-    print_event_to_file("TIP export snapshot to chrome JSON", 'X', start_time_in_ms, tip_thread_state.thread_id, nullptr, end_time_in_ms - start_time_in_ms);
+    print_event_to_file("TIP export snapshot to chrome JSON", tip_info_category, 'X', start_time_in_ms, tip_thread_state.thread_id, end_time_in_ms - start_time_in_ms);
   }
 
 

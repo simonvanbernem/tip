@@ -144,13 +144,18 @@ void main(){
 
 void main(){
   tip_global_init();
+  tip_set_category_name(1, "Kategorie 1a!");
+  tip_set_category_name(2, "CCat 2");
+  printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
+
   tip_set_memory_limit(2 * 1024 * 1024);
   tip_thread_init();
+  printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
   for(int i = 0; i < 10000; i++){
-    TIP_PROFILE_SCOPE("scope1");
+    TIP_PROFILE_SCOPE("scope1", 1);
     for(int j = 0; j < 1000; j++) {
-      TIP_PROFILE_SCOPE("scope2");
+      TIP_PROFILE_SCOPE("scope2", 2);
     }
     // if (i == 3000)
     //   tip_set_memory_limit(5 * 1024 * 1024);
@@ -160,8 +165,9 @@ void main(){
       tip_set_memory_limit(30 * 1024 * 1024);
   }
 
-  printf("%.3fKiB/%.3fKiB used.\n", double(tip_get_current_memory_footprint()) / 1024., double(tip_get_memory_limit()) / 1024.);
+  printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
+  tip_set_category_name(1, "Korie 1a!");
   tip_set_memory_limit(0);
   printf("Average duration of a single profiling event is %fns.\n", tip_measure_average_duration_of_recording_a_single_profiling_event() * 1000000000.);
   tip_export_state_to_chrome_json("profiling_data.json");
