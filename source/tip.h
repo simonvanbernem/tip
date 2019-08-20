@@ -1,7 +1,7 @@
 //Tiny Instrumented Profiler (TIP) - v0.9 - MIT licensed
 //authored from 2018-2019 by Simon van Bernem
 // 
-// This library gathers information about the execution time of a programm and
+// This library gathers information about the execution time of a program and
 // exports it into an intermediary format and/or a JSON format that can be used
 // with the chrome profiler frontend (URL "chrome://tracing" in any chrome browser).
 // 
@@ -660,7 +660,7 @@ TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
 #define tip_zone_function(/*uint64_t*/ categories)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
 
-TIP_API char* tip_tprintf(const char* format, ...);
+TIP_API const char* tip_tprintf(const char* format, ...);
 //Provides sprintf-like functionality with a buffer that is managed by tip. The
 // string returned by this stays valid until the next call to tip_tprintf on the
 // same thread. This is intended to be used when you want to generate dynamic
@@ -751,12 +751,12 @@ TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
 // Currently, the only output format besides an experimental binary compressed
 // format is a JSON-format that can be read by the chrome profiling frontend.
 
-TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name, bool profile_export_and_include_in_the_output = true);
+TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* file_name, bool profile_export_and_include_in_the_output = true);
 // Outputs the a given snapshot to a file, that can be read by the chrome
 // profiling-frontend. To use the chrome profiling frontend, navigate to the URL
 // "chrome://tracing" in a chrome browser.
 
-TIP_API int64_t tip_export_state_to_chrome_json(char* file_name, bool profile_export_and_include_in_the_output = true);
+TIP_API int64_t tip_export_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output = true);
 // Creates a snapshot, exports it using tip_export_snapshot_to_chrome_json and
 // frees it. Simply a shortcut
 
@@ -1082,7 +1082,7 @@ static tip_Global_State tip_global_state;
 
 #include "stdarg.h"
 
-char* tip_tprintf(const char* format, ...){
+const char* tip_tprintf(const char* format, ...){
   va_list args;
   va_start(args, format);
   int characters_printed = vsnprintf(tip_thread_state.tprintf_buffer, TIP_EVENT_BUFFER_SIZE, format, args);
@@ -1637,7 +1637,7 @@ uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percenta
   return uint64_t(total_events) * (126 + average_name_length); //126 was measured as the typical length of serialized event (without the name).
 }
 
-int64_t tip_export_state_to_chrome_json(char* file_name, bool profile_export_and_include_in_the_output){
+int64_t tip_export_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output){
   auto snapshot = tip_create_snapshot();
   auto file_size = tip_export_snapshot_to_chrome_json(snapshot, file_name, profile_export_and_include_in_the_output);
   tip_free_snapshot(snapshot);
@@ -1646,7 +1646,7 @@ int64_t tip_export_state_to_chrome_json(char* file_name, bool profile_export_and
 
 #include "stdarg.h"
 
-int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name, bool profile_export_and_include_in_the_output){
+int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* file_name, bool profile_export_and_include_in_the_output){
   if(snapshot.number_of_events == 0)
     return 0;
 
