@@ -605,20 +605,64 @@ TIP_API bool tip_set_category_name(uint64_t category, const char* category_name)
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// Profiling macros: These macros are used to actually record the profiling
-// data. Use them to mark sections that you want profile. If
-// TIP_GLOBAL_TOGGLE is defined, and the global toggle is disable,
-// these macros do nothing.
+// Profiling functions: (tip_zone, tip_zone_cond and tip_zone_function are
+// actually macros, but to simplify things, I will call them all functions)
+// These functions are used to record profiling data into a buffer, which
+// can be queried into a snapshot using tip_create_snapshot. Use them to mark
+// zones that you want profile.
+// If TIP_GLOBAL_TOGGLE is defined and the global toggle is disable, calling
+// these functions does nothing.
+// If TIP_MEMORY_LIMIT is defined, the memory limit is non-zero and recording
+// more profiling data would violate the defined limit, calling these function
+// does nothing.
 // 
-// Every once in a while, a call to these macros will
-// take much longer than usual, because TIP has to allocate a new buffer to
-// store the profiling information in. This will distort the accuracy of the
-// data, and you may consider increasing TIP_EVENT_BUFFER_SIZE, so fewer, bigger
-// buffers will be allocated. Buffer usage increases with more profiling events
-// and longer event names.
+// Every once in a while, a call to these functions will take signifcantly
+// longer than usual, because TIP has to allocate a new buffer to store the
+// profiling information in. This will distort the accuracy of the data, and you
+// may consider increasing TIP_EVENT_BUFFER_SIZE, so fewer, bigger buffers will
+// be allocated. TIPs memory footprint and in turn the frequency of buffer
+// allocations scales with the number of profiling events and the length of the
+// event names.
 // 
 // Most macros take a name argument. This name is used for display in frontends
 // and to match openening and closing profiling sections.
+
+// Manual profilers:
+
+TIP_API void tip_zone_start(const char* name, uint64_t categories);
+//Starts a profiling zone with the given name and the given categories. Use
+// tip_zone_stop to stop the zone.
+
+TIP_API void tip_zone_stop(uint64_t categories);
+//Stops the most recently started profiling zone, that was started by
+// tip_zone_start or a tip_zone...-macro.
+
+TIP_API void tip_async_zone_start(const char* name, uint64_t categories);
+//Starts an async profiling zone with the given name and the given categories.
+// Async zones don't have to adhere to the stack-like nature of normal zones.
+// To put it formally: The number of zone starts and stops between the begin and
+// end of a an async zone does not have to be equal. You can for example start
+// an async zone on one thread and end it on another, or start two different
+// async zones 1 and 2 and end zone 1 before 2. This is not possible with normal
+// zones.
+
+TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
+//Stops an async profiling zone with the same name, that was started with
+// tip_async_zone_start.
+
+//for tip_zone("test", 1), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true, 1);
+#define tip_zone(/*const char* */ name, /*uint64_t*/ categories)\
+  tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true, categories);
+
+#define tip_zone_cond(/*const char* */ name, /*uint64_t*/ categories, condition)\
+  tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, condition, categories);
+
+#define tip_zone_function(/*uint64_t*/ categories)\
+  tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
+
+TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
+//
+
 
 // The following macros are available:
 // 
@@ -716,30 +760,6 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 //------------------------------------------------------------------------------
 // Misc:
 
-TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
-
-#ifndef TIP_GLOBAL_TOGGLE
-  #define TIP_PROFILE_SCOPE(name, categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true, categories); // for TIP_PROFILE_SCOPE("test"), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true);
-  #define TIP_PROFILE_SCOPE_COND(name, categories, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, condition, categories);
-  #define TIP_PROFILE_FUNCTION(categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
-
-  #define TIP_PROFILE_START(name, categories) tip_save_profile_event(name, tip_Event_Type::start, categories);
-  #define TIP_PROFILE_STOP(categories) tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
-
-  #define TIP_PROFILE_ASYNC_START(name, categories) tip_save_profile_event(name, tip_Event_Type::start_async, categories);
-  #define TIP_PROFILE_ASYNC_STOP(name, categories) tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
-#else
-  #define TIP_PROFILE_SCOPE(name, categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(name, tip_get_global_toggle(), categories);
-  #define TIP_PROFILE_SCOPE_COND(name, categories, condition) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, tip_get_global_toggle() && condition, categories);
-  #define TIP_PROFILE_FUNCTION(categories) tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(cond_profauto, __LINE__)(__FUNCTION__, tip_get_global_toggle(), categories);
-
-  #define TIP_PROFILE_START(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::start, categories);}
-  #define TIP_PROFILE_STOP(categories) {if(tip_get_global_toggle()) tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);}
-
-  #define TIP_PROFILE_ASYNC_START(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::start_async, categories);}
-  #define TIP_PROFILE_ASYNC_STOP(name, categories) {if(tip_get_global_toggle()) tip_save_profile_event(name, tip_Event_Type::stop_async, categories);}
-#endif
-
 const uint64_t tip_info_category = 1llu << 63;
 const uint64_t tip_all_categories = UINT64_MAX;
 
@@ -754,6 +774,10 @@ struct tip_Conditional_Scope_Profiler{
   int64_t condition = false;
   uint64_t categories;
   tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition, uint64_t new_categories){
+
+#ifdef TIP_GLOBAL_TOGGLE
+    new_condition = new_condition && tip_get_global_toggle();
+#endif
     if(new_condition){
       tip_save_profile_event(event_name, tip_Event_Type::start, new_categories);
       condition = true;
@@ -791,6 +815,35 @@ uint64_t tip_get_serialized_value_size(T value){
 
 
 #ifdef TIP_IMPLEMENTATION
+
+  void tip_zone_start(const char* name, uint64_t categories){
+#ifdef TIP_GLOBAL_TOGGLE
+    if(tip_get_global_toggle())
+#endif
+    tip_save_profile_event(name, tip_Event_Type::start, categories);
+  }
+
+  void tip_zone_stop(uint64_t categories){
+#ifdef TIP_GLOBAL_TOGGLE
+    if(tip_get_global_toggle())
+#endif
+     tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
+  }
+
+  void tip_async_zone_start(const char* name, uint64_t categories){
+#ifdef TIP_GLOBAL_TOGGLE
+    if(tip_get_global_toggle())
+#endif
+    tip_save_profile_event(name, tip_Event_Type::start_async, categories);
+  }
+
+  void tip_async_zone_stop(const char* name, uint64_t categories){
+#ifdef TIP_GLOBAL_TOGGLE
+    if(tip_get_global_toggle())
+#endif
+    tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
+  }
+
 
 bool operator==(tip_Event& lhs, tip_Event& rhs){
   bool a = (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
@@ -1256,7 +1309,7 @@ double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64
 
     auto measurement_start = tip_get_timestamp();
     for(uint64_t i = 0; i < sample_size / 2; i++){
-      TIP_PROFILE_SCOPE("TIP test measurement", tip_info_category);
+      tip_zone("TIP test measurement", tip_info_category);
       for(uint64_t j = 0; j < 1000; j++)
         dummy_variable_for_measurement++;
     }
@@ -1567,6 +1620,8 @@ int64_t tip_export_state_to_chrome_json(char* file_name, bool profile_export_and
   return file_size;
 }
 
+#include "stdarg.h"
+
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_name, bool profile_export_and_include_in_the_output){
   if(snapshot.number_of_events == 0)
     return 0;
@@ -1616,7 +1671,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   };
   
   auto print_event_to_buffer = [&](const char* name, uint64_t categories, char ph, double ts, int32_t tid, double dur = 0){
-    TIP_PROFILE_SCOPE("print_event_to_buffer", 1);
+    tip_zone("print_event_to_buffer", 1);
 
     if(!first) copy_string_to_file_buffer(",\n");
     first = false;

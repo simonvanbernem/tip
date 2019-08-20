@@ -8,25 +8,25 @@
 void profile_stuff(){
 	for(int i = 0; i < 11; i++){
 		char* name = "adurchlauf nummer";
-		TIP_PROFILE_SCOPE(name);
+		tip_zone(name);
 		for(int j = 0; j < 9; j++){
-			TIP_PROFILE_SCOPE("bJahhhhooooo");
+			tip_zone("bJahhhhooooo");
 		}
 	}
 
 	for(int i = 0; i < 11; i++){
 		char* name = "bdurchlauf nummer";
-		TIP_PROFILE_SCOPE(name);
+		tip_zone(name);
 		for(int j = 0; j < 9; j++){
-			TIP_PROFILE_SCOPE("aJahhhhooooo");
+			tip_zone("aJahhhhooooo");
 		}
 	}
 
 	for(int i = 0; i < 11; i++){
 		char* name = "cdurchlauf nummer";
-		TIP_PROFILE_SCOPE(name);
+		tip_zone(name);
 		for(int j = 0; j < 9; j++){
-			TIP_PROFILE_SCOPE("cJahhhhooooo");
+			tip_zone("cJahhhhooooo");
 		}
 	}
 }
@@ -71,7 +71,7 @@ void main(){
 
 }
 #endif
-#define e3
+#define e2
 
 #ifdef e1
 #define TIP_AUTO_INIT //make TIP take care of initialization
@@ -80,7 +80,7 @@ void main(){
 
 void main(){
   {
-    TIP_PROFILE_SCOPE("cool stuff happening");
+    tip_zone("cool stuff happening", 1);
   }
   tip_export_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
@@ -95,40 +95,40 @@ void main(){
 #include "tip.h"
 
 void burn_cpu(int index){
-  TIP_PROFILE_FUNCTION();
+  tip_zone_function(1);
   for(int dummy = 0; dummy < index * 1000 + 1000; dummy++){}
 }
 
 void do_stuff(int index){
-  TIP_PROFILE_FUNCTION();
+  tip_zone_function(1);
 
   if(index == 5)
-    TIP_PROFILE_ASYNC_START("Time from 5");
+    tip_async_zone_start("Time from 5", 1);
 
   if(index == 17)
-    TIP_PROFILE_ASYNC_STOP("Time until 17");
+    tip_async_zone_stop("Time until 17", 1);
 
   {
-    TIP_PROFILE_SCOPE_COND("If even, profile this scope.", index % 2 == 0);
+    tip_zone_cond("If even, profile this scope.", index % 2 == 0, 1);
     burn_cpu(index);
   }
   burn_cpu(index);
 }
 
 void main(){
-  TIP_PROFILE_ASYNC_START("Time until 17");
-  TIP_PROFILE_FUNCTION();
-  TIP_PROFILE_START("manual_main");
+  tip_async_zone_start("Time until 17", 1);
+  tip_zone_function(1);
+  tip_zone_start("manual_main", 1);
 
   for(int i = 0; i < 20; i++){
-    TIP_PROFILE_SCOPE_COND("scope1", true);
+    tip_zone_cond("scope1", true, 1);
     do_stuff(i);
   }
 
-  TIP_PROFILE_ASYNC_STOP("Time from 5");
-  TIP_PROFILE_STOP("manual_main");
+  tip_async_zone_stop("Time from 5", 1);
+  tip_zone_stop(1);
 
-  tip_export_state_to_chrome_json("profiling_data.json");
+  tip_export_state_to_chrome_json("profiling_data.json", 1);
 }
 
 #endif
@@ -152,12 +152,12 @@ void main(){
   tip_thread_init();
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
-  TIP_PROFILE_START("vor der schleife", tip_all_categories);
-  TIP_PROFILE_STOP(tip_all_categories);
+  tip_zone_start("vor der schleife", tip_all_categories);
+  tip_zone_stop(tip_all_categories);
   for(int i = 0; i < 1000; i++){
-    TIP_PROFILE_SCOPE("scope1", 1);
+    tip_zone("scope1", 1);
     for(int j = 0; j < 100; j++) {
-      TIP_PROFILE_SCOPE_COND("scope2", 2, true);
+      tip_zone_cond("scope2", 2, true);
     }
     if (i == 300){
       tip_remove_category_filter(2);
@@ -171,8 +171,8 @@ void main(){
       tip_set_memory_limit(30 * 1024 * 1024);
   }
 
-  TIP_PROFILE_START("nach der schleife", tip_all_categories);
-  TIP_PROFILE_STOP(tip_all_categories);
+  tip_zone_start("nach der schleife", tip_all_categories);
+  tip_zone_stop(tip_all_categories);
 
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
