@@ -121,7 +121,7 @@ void main(){
   TIP_PROFILE_START("manual_main");
 
   for(int i = 0; i < 20; i++){
-    TIP_PROFILE_SCOPE("scope1");
+    TIP_PROFILE_SCOPE_COND("scope1", true);
     do_stuff(i);
   }
 
@@ -139,7 +139,7 @@ void main(){
 #define TIP_USE_RDTSC
 #define TIP_IMPLEMENTATION
 #define TIP_EVENT_BUFFER_SIZE 1024 * 1024
-#define TIP_MEMORY_LIMIT
+// #define TIP_MEMORY_LIMIT
 #include "tip.h"
 
 void main(){
@@ -152,24 +152,34 @@ void main(){
   tip_thread_init();
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
-  for(int i = 0; i < 10000; i++){
+  TIP_PROFILE_START("vor der schleife", tip_all_categories);
+  TIP_PROFILE_STOP(tip_all_categories);
+  for(int i = 0; i < 1000; i++){
     TIP_PROFILE_SCOPE("scope1", 1);
-    for(int j = 0; j < 1000; j++) {
-      TIP_PROFILE_SCOPE("scope2", 2);
+    for(int j = 0; j < 100; j++) {
+      TIP_PROFILE_SCOPE_COND("scope2", 2, true);
     }
-    // if (i == 3000)
-    //   tip_set_memory_limit(5 * 1024 * 1024);
-    // if (i == 7000)
-    //   tip_set_memory_limit(0);
-    if (i == 8000)
+    if (i == 300){
+      tip_remove_category_filter(2);
+      tip_set_memory_limit(5 * 1024 * 1024);
+    }
+    if (i == 700){
+      tip_add_category_filter(2);
+      tip_set_memory_limit(0);
+    }
+    if (i == 800)
       tip_set_memory_limit(30 * 1024 * 1024);
   }
+
+  TIP_PROFILE_START("nach der schleife", tip_all_categories);
+  TIP_PROFILE_STOP(tip_all_categories);
 
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
   tip_set_category_name(1, "Korie 1a!");
   tip_set_memory_limit(0);
   printf("Average duration of a single profiling event is %fns.\n", tip_measure_average_duration_of_recording_a_single_profiling_event() * 1000000000.);
+  tip_export_state_to_chrome_json("profiling_data.json");
   tip_export_state_to_chrome_json("profiling_data.json");
 }
 
