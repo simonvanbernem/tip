@@ -71,7 +71,7 @@ void main(){
 
 }
 #endif
-#define e2
+#define e3
 
 #ifdef e1
 #define TIP_AUTO_INIT //make TIP take care of initialization
@@ -155,7 +155,7 @@ void main(){
   tip_zone_start("vor der schleife", tip_all_categories);
   tip_zone_stop(tip_all_categories);
   for(int i = 0; i < 1000; i++){
-    tip_zone("scope1", 1);
+    tip_zone(tip_tprintf("scope1 %d", i), 1);
     for(int j = 0; j < 100; j++) {
       tip_zone_cond("scope2", 2, true);
     }

@@ -660,6 +660,14 @@ TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
 #define tip_zone_function(/*uint64_t*/ categories)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
 
+TIP_API char* tip_tprintf(const char* format, ...);
+//Provides sprintf-like functionality with a buffer that is managed by tip. The
+// string returned by this stays valid until the next call to tip_tprintf on the
+// same thread. This is intended to be used when you want to generate dynamic
+// zone-names, like so:
+//tip_zone(tip_tprintf("%s: %s,%llu", "hi", dynamic_string, i), tip_info_category);
+
+
 TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
 //
 
@@ -816,34 +824,33 @@ uint64_t tip_get_serialized_value_size(T value){
 
 #ifdef TIP_IMPLEMENTATION
 
-  void tip_zone_start(const char* name, uint64_t categories){
+void tip_zone_start(const char* name, uint64_t categories){
 #ifdef TIP_GLOBAL_TOGGLE
-    if(tip_get_global_toggle())
+  if(tip_get_global_toggle())
 #endif
-    tip_save_profile_event(name, tip_Event_Type::start, categories);
-  }
+  tip_save_profile_event(name, tip_Event_Type::start, categories);
+}
 
-  void tip_zone_stop(uint64_t categories){
+void tip_zone_stop(uint64_t categories){
 #ifdef TIP_GLOBAL_TOGGLE
-    if(tip_get_global_toggle())
+  if(tip_get_global_toggle())
 #endif
-     tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
-  }
+   tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
+}
 
-  void tip_async_zone_start(const char* name, uint64_t categories){
+void tip_async_zone_start(const char* name, uint64_t categories){
 #ifdef TIP_GLOBAL_TOGGLE
-    if(tip_get_global_toggle())
+  if(tip_get_global_toggle())
 #endif
-    tip_save_profile_event(name, tip_Event_Type::start_async, categories);
-  }
+  tip_save_profile_event(name, tip_Event_Type::start_async, categories);
+}
 
-  void tip_async_zone_stop(const char* name, uint64_t categories){
+void tip_async_zone_stop(const char* name, uint64_t categories){
 #ifdef TIP_GLOBAL_TOGGLE
-    if(tip_get_global_toggle())
+  if(tip_get_global_toggle())
 #endif
-    tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
-  }
-
+  tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
+}
 
 bool operator==(tip_Event& lhs, tip_Event& rhs){
   bool a = (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
@@ -1034,6 +1041,8 @@ struct tip_Thread_State{
   int64_t event_balance_during_blocked = 0; //Since we can't record any events if we are blocked by the memory limit (or actual memory), but we don't pass names on the close-events anymore, the whole timeline after a memory block would be completly unusable since the "event stack" so to speak would containt the wrong number of start and stop events, if a different number of start and stop events happen during the block. We wont be able to record the timestamps or names of any events during the block, but we can keep count on how many start and stop events we saw during the block, to not mess up our stack. A start event increments the balance by one, a stop events decrements. If we are positive at the end of the block, we generate dummy starts, and if we are negative, we generate dummy ends.
 #endif
 
+  char tprintf_buffer[TIP_EVENT_BUFFER_SIZE]; //we use this buffer for the tprint function. If vsnprintf fails due to buffer size, we know that we don't need to record that event, since it won't fit into the event buffer anyway. So we just assert and/or discard the event.
+
   tip_Event_Buffer* first_event_buffer;
   tip_Event_Buffer* current_event_buffer;
 };
@@ -1071,7 +1080,22 @@ struct tip_Global_State{
 thread_local tip_Thread_State tip_thread_state;
 static tip_Global_State tip_global_state;
 
+#include "stdarg.h"
 
+char* tip_tprintf(const char* format, ...){
+  va_list args;
+  va_start(args, format);
+  int characters_printed = vsnprintf(tip_thread_state.tprintf_buffer, TIP_EVENT_BUFFER_SIZE, format, args);
+  va_end(args);
+
+  TIP_ASSERT(characters_printed > 0 && "vsnprintf returned an error. Please check your format string and arguments!");
+  TIP_ASSERT(characters_printed < TIP_EVENT_BUFFER_SIZE && "This name is too long to fit in an event buffer! To fix this error, pick a shorter name or increase the event buffer size using TIP_EVENT_BUFFER_SIZE.");
+
+  if(characters_printed < 0 || characters_printed > TIP_EVENT_BUFFER_SIZE)
+    tip_thread_state.tprintf_buffer[0] = '\0';
+
+  return tip_thread_state.tprintf_buffer;
+}
 
 void tip_set_memory_limit(uint64_t limit_in_bytes){
 #ifdef TIP_MEMORY_LIMIT
@@ -1670,14 +1694,22 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
     file_buffer.insert((char*) s, tip_strlen(s));
   };
   
-  auto print_event_to_buffer = [&](const char* name, uint64_t categories, char ph, double ts, int32_t tid, double dur = 0){
+  auto print_event_to_buffer = [&](int64_t name_id, uint64_t categories, char ph, double ts, int32_t tid, double dur = 0, const char* name_override = nullptr){
     tip_zone("print_event_to_buffer", 1);
+
+    if(!name_override)
+      tip_escape_string_for_json(snapshot.names.get_string(name_id), &escaped_name_buffer);
 
     if(!first) copy_string_to_file_buffer(",\n");
     first = false;
 
     copy_string_to_file_buffer("  {\"name\":\"");
-    copy_string_to_file_buffer((char*) name);
+
+    if(name_override)
+      copy_string_to_file_buffer(name_override);
+    else
+      copy_string_to_file_buffer(escaped_name_buffer.data);
+
     copy_string_to_file_buffer("\",\"ph\":\"");
     file_buffer.insert(ph);
     copy_string_to_file_buffer("\",\"ts\":");
@@ -1705,7 +1737,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
     }
 
     if(ph == 'X')                   printf_to_file_buffer("\",\"dur\":%.3f}", dur);
-    else if(ph == 'b' || ph == 'e') {copy_string_to_file_buffer("\",\"id\":1}");}
+    else if(ph == 'b' || ph == 'e') printf_to_file_buffer("\",\"id\":%lld}", name_id);
     else                            {copy_string_to_file_buffer("\"}"         );}
   };
 
@@ -1719,8 +1751,6 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
 
     for(tip_Event event : snapshot.events[thread_index]){
       double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
-      tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
-      const char* name = &escaped_name_buffer[0];
 
       switch(event.type){
         case tip_Event_Type::start:
@@ -1734,30 +1764,27 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
           if(event_stack.size == 0
             || (event.type == tip_Event_Type::stop                    && event_stack[event_stack.size - 1].type != tip_Event_Type::start                   )
             || (event.type == tip_Event_Type::tip_get_new_buffer_stop && event_stack[event_stack.size - 1].type != tip_Event_Type::tip_get_new_buffer_start)){
-            print_event_to_buffer("UNKNOWN STOP EVENT", event.categories, 'i', timestamp_in_ms, thread_id);
+            print_event_to_buffer(-1, event.categories, 'i', timestamp_in_ms, thread_id, 0, "UNKNOWN STOP EVENT");
             continue; //there is no matching event
           }
           
           auto start_event = event_stack.pop_last();
-          tip_escape_string_for_json(snapshot.names.get_string(start_event.name_id), &escaped_name_buffer);
-          name = &escaped_name_buffer[0];
-
           double start_time_in_ms = timestamp_to_microseconds(start_event.timestamp);
-          print_event_to_buffer(name, event.categories, 'X', start_time_in_ms, thread_id, timestamp_in_ms - start_time_in_ms);
+          print_event_to_buffer(start_event.name_id, event.categories, 'X', start_time_in_ms, thread_id, timestamp_in_ms - start_time_in_ms);
         } break;
 
         case tip_Event_Type::start_async:
         case tip_Event_Type::tip_recording_halted_because_of_memory_limit_start:{
-          print_event_to_buffer(name, event.categories, 'b', timestamp_in_ms, thread_id);
+          print_event_to_buffer(event.name_id, event.categories, 'b', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::stop_async:
         case tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop:{
-          print_event_to_buffer(name, event.categories, 'e', timestamp_in_ms, thread_id);
+          print_event_to_buffer(event.name_id, event.categories, 'e', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::event:{
-          print_event_to_buffer(name, event.categories, 'i', timestamp_in_ms, thread_id);
+          print_event_to_buffer(event.name_id, event.categories, 'i', timestamp_in_ms, thread_id);
         } break;
 
         default:{
@@ -1769,18 +1796,16 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
     //print all start and stop events that don't have a corresponding event they could form a duration event with
     for(tip_Event event : event_stack){
       double timestamp_in_ms = timestamp_to_microseconds(event.timestamp);
-      tip_escape_string_for_json(snapshot.names.get_string(event.name_id), &escaped_name_buffer);
-      char* name = escaped_name_buffer.data;
 
       switch(event.type){
         case tip_Event_Type::start:
         case tip_Event_Type::tip_get_new_buffer_start:{
-          print_event_to_buffer(name, event.categories, 'B', timestamp_in_ms, thread_id);
+          print_event_to_buffer(event.name_id, event.categories, 'B', timestamp_in_ms, thread_id);
         } break;
 
         case tip_Event_Type::stop:
         case tip_Event_Type::tip_get_new_buffer_stop:{
-          print_event_to_buffer(name, event.categories, 'E', timestamp_in_ms, thread_id);
+          print_event_to_buffer(event.name_id, event.categories, 'E', timestamp_in_ms, thread_id);
         } break;
 
         default:{
@@ -1798,7 +1823,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, char* file_nam
   if(profile_export_and_include_in_the_output){
     auto start_time_in_ms = timestamp_to_microseconds(export_start_time);
     auto end_time_in_ms = timestamp_to_microseconds(tip_get_timestamp());
-    print_event_to_buffer("TIP export snapshot to chrome JSON", tip_info_category, 'X', start_time_in_ms, tip_thread_state.thread_id, end_time_in_ms - start_time_in_ms);
+    print_event_to_buffer(0, tip_info_category, 'X', start_time_in_ms, tip_thread_state.thread_id, end_time_in_ms - start_time_in_ms, "TIP export snapshot to chrome JSON");
   }
 
 
