@@ -82,7 +82,7 @@ void main(){
   {
     tip_zone("cool stuff happening", 1);
   }
-  tip_export_state_to_chrome_json("profiling_data.json");
+  tip_export_current_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
 }
 #endif
@@ -128,7 +128,7 @@ void main(){
   tip_async_zone_stop("Time from 5", 1);
   tip_zone_stop(1);
 
-  tip_export_state_to_chrome_json("profiling_data.json", 1);
+  tip_export_current_state_to_chrome_json("profiling_data.json", 1);
 }
 
 #endif
@@ -179,8 +179,8 @@ void main(){
   tip_set_category_name(1, "Korie 1a!");
   tip_set_memory_limit(0);
   printf("Average duration of a single profiling event is %fns.\n", tip_measure_average_duration_of_recording_a_single_profiling_event() * 1000000000.);
-  tip_export_state_to_chrome_json("profiling_data.json");
-  tip_export_state_to_chrome_json("profiling_data.json");
+  tip_export_current_state_to_chrome_json("profiling_data.json");
+  tip_export_current_state_to_chrome_json("profiling_data.json");
 }
 
 #endif

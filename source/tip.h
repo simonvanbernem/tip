@@ -63,7 +63,7 @@ void main(){
   {
     TIP_PROFILE_SCOPE("cool stuff happening");
   }
-  tip_export_state_to_chrome_json("profiling_data.json");
+  tip_export_current_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
 }
 
@@ -101,7 +101,7 @@ void main(){
   TIP_PROFILE_ASYNC_STOP("Time from 5"); //close an async zone that will be started in do_stuff
   TIP_PROFILE_STOP("manual_main"); //close a manual zone
 
-  tip_export_state_to_chrome_json("profiling_data.json");
+  tip_export_current_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
 }
 
@@ -752,11 +752,15 @@ TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
 // format is a JSON-format that can be read by the chrome profiling frontend.
 
 TIP_API int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* file_name, bool profile_export_and_include_in_the_output = true);
-// Outputs the a given snapshot to a file, that can be read by the chrome
+// Outputs the given snapshot to a file, that can be read by the chrome
 // profiling-frontend. To use the chrome profiling frontend, navigate to the URL
 // "chrome://tracing" in a chrome browser.
 
-TIP_API int64_t tip_export_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output = true);
+TIP_API tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, bool profile_export_and_include_in_the_output = true);
+// Outputs the given snapshot to a memory buffer and returns the buffer as a
+// tip_Dynamic_Array.
+
+TIP_API int64_t tip_export_current_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output = true);
 // Creates a snapshot, exports it using tip_export_snapshot_to_chrome_json and
 // frees it. Simply a shortcut
 
@@ -1637,23 +1641,36 @@ uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float percenta
   return uint64_t(total_events) * (126 + average_name_length); //126 was measured as the typical length of serialized event (without the name).
 }
 
-int64_t tip_export_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output){
+int64_t tip_export_current_state_to_chrome_json(const char* file_name, bool profile_export_and_include_in_the_output){
   auto snapshot = tip_create_snapshot();
   auto file_size = tip_export_snapshot_to_chrome_json(snapshot, file_name, profile_export_and_include_in_the_output);
   tip_free_snapshot(snapshot);
   return file_size;
 }
 
-#include "stdarg.h"
 
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* file_name, bool profile_export_and_include_in_the_output){
-  if(snapshot.number_of_events == 0)
-    return 0;
-
-  uint64_t export_start_time = tip_get_timestamp();
-
   FILE* file = nullptr;
   fopen_s(&file, file_name, "w+");
+  TIP_ASSERT(file && "Failed to open the file.");
+  if(!file)
+    return -1;
+
+  auto file_buffer = tip_export_snapshot_to_chrome_json(snapshot, profile_export_and_include_in_the_output);
+  fputs(file_buffer.data, file);
+  file_buffer.destroy();
+  uint64_t file_size = uint64_t(ftell(file));
+  fclose(file);
+  return file_size;
+}
+
+#include "stdarg.h"
+
+tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, bool profile_export_and_include_in_the_output){
+  if(snapshot.number_of_events == 0)
+    return {};
+
+  uint64_t export_start_time = tip_get_timestamp();
 
   uint64_t first_timestamp = snapshot.events[0][0].timestamp;
 
@@ -1829,10 +1846,7 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* fi
 
   copy_string_to_file_buffer("\n],\n\"displayTimeUnit\": \"ns\"\n}");
   file_buffer.insert('\0');
-  fputs(file_buffer.data, file);
-  uint64_t size = uint64_t(ftell(file));
-  fclose(file);
-  return size;
+  return file_buffer;
 }
 
 void tip_free_snapshot(tip_Snapshot snapshot){
