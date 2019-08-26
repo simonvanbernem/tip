@@ -134,13 +134,38 @@ void main(){
 #endif
 
 #ifdef e3
+#include <map>
+int64_t overall = 0;
 
+std::map<void*, uint64_t> allocation_sizes;
+void* log_realloc(void* pointer, uint64_t size, int line){
+  overall += (int64_t)size - (int64_t)allocation_sizes[pointer];
+  void* new_pointer = realloc(pointer, size);
+  (void) line;
+  // printf("realloc (%d): %llu->%llu (%p)\n", line, allocation_sizes[pointer], size, new_pointer);
+  allocation_sizes.erase(pointer);
+  allocation_sizes[new_pointer] = size;
+  return new_pointer;
+}
+
+void log_free(void* pointer, int line){
+  (void) line;
+  // printf("free (%d): %llu (%p)\n", line, allocation_sizes[pointer], pointer);
+  free(pointer);
+  overall -= (int64_t)allocation_sizes[pointer];
+  allocation_sizes.erase(pointer);
+}
+
+#define TIP_REALLOC(pointer, size) log_realloc(pointer, size, __LINE__)
+#define TIP_FREE(size) log_free(size, __LINE__)
 #define TIP_WINDOWS
 #define TIP_USE_RDTSC
 #define TIP_IMPLEMENTATION
 #define TIP_EVENT_BUFFER_SIZE 1024 * 1024
 // #define TIP_MEMORY_LIMIT
 #include "tip.h"
+
+
 
 void main(){
   tip_global_init();
@@ -181,6 +206,18 @@ void main(){
   printf("Average duration of a single profiling event is %fns.\n", tip_measure_average_duration_of_recording_a_single_profiling_event() * 1000000000.);
   tip_export_current_state_to_chrome_json("profiling_data.json");
   tip_export_current_state_to_chrome_json("profiling_data.json");
+
+  printf("Balance: %lld\n", overall);
+
+  tip_reset();
+  printf("Balance: %lld\n", overall);
+  printf("Leftovers:\n");
+  for (std::map<void*, uint64_t>::iterator it = allocation_sizes.begin(); it != allocation_sizes.end(); ++it)
+  {
+    printf("  %p: %llu", it->first, it->second);
+  }
+
+
 }
 
 #endif

@@ -154,10 +154,6 @@ void do_stuff(int index){
 #define TIP_ASSERT assert
 #endif
 
-#ifndef TIP_MALLOC
-#define TIP_MALLOC malloc
-#endif
-
 #ifndef TIP_REALLOC
 #define TIP_REALLOC realloc
 #endif
@@ -382,7 +378,7 @@ struct tip_String_Interning_Hash_Table{
 
     for(uint64_t i = 0; i < name_indices.size; i++){
       if(name_indices[i] == -1)
-        return;
+        break;
 
       char* string = name_buffer.data + name_indices[i];
       uint64_t string_length = tip_strlen(string);
@@ -504,11 +500,22 @@ TIP_API double tip_global_init();
 TIP_API bool tip_thread_init();
 // Initializes the thread-local state of TIP and should be called once, after
 // tip_global_init but before attempting to record profiling events in that
-// thread. If the thread-local state was already initialized, this
-// function does nothing. If TIP_AUTO_INIT is defined, there is no need to
-// call this fuction. If TIP_MEMORY_LIMIT is defined and initializing the thread
-// state would have violated the limit, the function return false. Otherwise, it
-// returns true.
+// thread. If the thread-local state was already initialized, this function does
+// nothing. If TIP_AUTO_INIT is defined, there is no need to call this fuction.
+// If TIP_MEMORY_LIMIT is defined and initializing the thread state would have
+// violated the limit, the function returns false. Otherwise, it returns true.
+
+TIP_API void tip_clear();
+// Deletes all recorded events from the internal event buffers. Does not free
+// any memory. Threads and global state stays initialized. Existing Snapshots
+// are not affected in any way.
+
+
+TIP_API void tip_reset();
+// Resets the internal state completly: All recorded events are deleted, thread
+// and global state is de-initialized and needs to be initialized again before
+// use. Any dynamically allocated memory is freed, except any memory occupied by
+// snapshots. Existings Snapshots are not affected in any way.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -737,8 +744,6 @@ TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_
 // most clocks I've observed report a much higher resolution than they actually
 // have)
 
-TIP_API void tip_clear_internal_profiling_data();
-
 TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
 // Frees the memory of a snapshot
 
@@ -920,6 +925,12 @@ Mutex tip_create_mutex(){
   return mutex;
 }
 
+void tip_destroy_mutex(Mutex mutex){
+  BOOL success = CloseHandle(mutex.handle);
+  (void) success;
+  TIP_ASSERT(success != 0);
+}
+
 void tip_lock_mutex(Mutex mutex){
   WaitForSingleObject(mutex.handle, INFINITE);
 }
@@ -973,6 +984,10 @@ struct Mutex{
 
 Mutex tip_create_mutex(){
   return {new std::mutex};
+}
+
+void tip_destroy_mutex(Mutex mutex){
+  delete mutex.mutex;
 }
 
 void tip_lock_mutex(Mutex mutex){
@@ -1058,9 +1073,7 @@ struct tip_Global_State{
   tip_Dynamic_Array<char> category_name_buffer;
   int64_t category_name_indices[64]; //for each category possible (64 bits so 64 categories), contains the index to the start of this categories name in the category_name_buffer (or -1 if no name)
 
-#ifdef TIP_GLOBAL_TOGGLE
   bool toggle = false;
-#endif
 
 #ifdef TIP_MEMORY_LIMIT
   //memory limiting strategy: There is a hard limit and a soft lift. The hard limit is a value, that is set by the user and must not be exceeded. If we were to guarantee this by comparing the occupied memory against the hard limit, we would have to take a critical section each time we do the comparison, to guarantee that no race-condition happens (a thread might allocate memory right after an other thread has done the check but before it allocated, leading to two threads allocating memory).
@@ -1083,6 +1096,35 @@ struct tip_Global_State{
 
 thread_local tip_Thread_State tip_thread_state;
 static tip_Global_State tip_global_state;
+
+// void tip_clear(){
+//   //@TODO make this thread-safe
+// }
+
+//@TODO make this thread-safe
+void tip_reset(){
+  for(auto thread_state : tip_global_state.thread_states){
+    tip_Event_Buffer* buffer = thread_state->first_event_buffer;
+    while(buffer){
+      auto next_buffer = buffer->next_buffer;
+      TIP_FREE(buffer);
+      buffer = next_buffer;
+    }
+
+    thread_state = {};
+  }
+
+  tip_global_state.category_name_buffer.destroy();
+
+#ifdef TIP_MEMORY_LIMIT
+  tip_destroy_mutex(tip_global_state.record_memory_limit_events_mutex);
+#endif
+  tip_destroy_mutex(tip_global_state.thread_states_mutex);
+
+  tip_global_state.thread_states.destroy();
+  tip_global_state = {};
+}
+
 
 #include "stdarg.h"
 
@@ -1258,7 +1300,7 @@ bool tip_get_new_event_buffer(){
   if(!new_buffer)
     return false;
 #else
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_MALLOC(sizeof(tip_Event_Buffer));
+  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_REALLOC(nullptr, sizeof(tip_Event_Buffer));
 #endif
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
@@ -1526,7 +1568,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
     tip_Dynamic_Array<tip_Event> thread_events;
     tip_Event_Buffer* event_buffer = thread_state->first_event_buffer;
 
-    while(event_buffer){
+    while (event_buffer) {
       uint8_t* data_pointer = event_buffer->position_of_first_event;
 
       while(data_pointer != event_buffer->current_position){
@@ -1701,6 +1743,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
       int printed_characters = vsnprintf(file_buffer.data + file_buffer.size, file_buffer.capacity - file_buffer.size, format, args) + 1;
       va_end(args);
 
+      (void) printed_characters; //suppress warning when compiling in release
       TIP_ASSERT(printed_characters > 0 && printed_characters == characters_to_print && (printed_characters + 1) <= (file_buffer.capacity - file_buffer.size));
     }
 
@@ -1834,9 +1877,6 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
     event_stack.clear();
   }
 
-  event_stack.destroy();
-  escaped_name_buffer.destroy();
-
   if(profile_export_and_include_in_the_output){
     auto start_time_in_ms = timestamp_to_microseconds(export_start_time);
     auto end_time_in_ms = timestamp_to_microseconds(tip_get_timestamp());
@@ -1846,6 +1886,10 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
 
   copy_string_to_file_buffer("\n],\n\"displayTimeUnit\": \"ns\"\n}");
   file_buffer.insert('\0');
+
+  event_stack.destroy();
+  escaped_name_buffer.destroy();
+
   return file_buffer;
 }
 
@@ -1857,6 +1901,7 @@ void tip_free_snapshot(tip_Snapshot snapshot){
     snapshot.events[i].destroy();
   }
   snapshot.events.destroy();
+  snapshot.category_name_buffer.destroy();
 }
 
 #endif //TIP_IMPLEMENTATION
