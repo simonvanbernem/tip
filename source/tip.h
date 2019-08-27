@@ -192,6 +192,11 @@ T tip_max(T v0, T v1){
     return v1;
 }
 
+#ifdef TIP_MEMORY_LIMIT
+void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size);
+#endif
+
+
 template<typename T>
 struct tip_Dynamic_Array{
   T* data = nullptr;
