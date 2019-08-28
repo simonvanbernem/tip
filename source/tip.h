@@ -1230,7 +1230,24 @@ bool tip_does_category_pass_filter(uint64_t category){
   return category & tip_global_state.category_filter;
 }
 
+bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
+  #ifdef TIP_AUTO_INIT
+    if(!tip_thread_state.initialized){
+      if(!tip_global_state.initialized){
+        tip_global_init();
+      }
+      return tip_thread_init();
+    }
+    return true;
+  #else
+    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
+    return tip_thread_state.initialized;
+  #endif
+}
+
 bool tip_set_category_name(uint64_t category_id, const char* category_name){
+  tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+
   for(uint64_t i = 0; i < 64; i++){
     if(1llu << i == category_id){
       
@@ -1326,21 +1343,6 @@ bool tip_get_new_event_buffer(){
   }
 
   return true;
-}
-
-bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
-  #ifdef TIP_AUTO_INIT
-    if(!tip_thread_state.initialized){
-      if(!tip_global_state.initialized){
-        tip_global_init();
-      }
-      return tip_thread_init();
-    }
-    return true;
-  #else
-    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
-    return tip_thread_state.initialized;
-  #endif
 }
 
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories) {
