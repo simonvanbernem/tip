@@ -1747,7 +1747,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
       file_buffer.reserve(file_buffer.size + characters_to_print + 1);
 
       va_start(args, format);
-      int printed_characters = vsnprintf(file_buffer.data + file_buffer.size, file_buffer.capacity - file_buffer.size, format, args) + 1;
+      int printed_characters = vsnprintf(file_buffer.data + file_buffer.size, file_buffer.capacity - file_buffer.size, format, args);
       va_end(args);
 
       (void) printed_characters; //suppress warning when compiling in release
