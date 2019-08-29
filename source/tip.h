@@ -1065,8 +1065,6 @@ struct tip_Thread_State{
   int64_t event_balance_during_blocked = 0; //Since we can't record any events if we are blocked by the memory limit (or actual memory), but we don't pass names on the close-events anymore, the whole timeline after a memory block would be completly unusable since the "event stack" so to speak would containt the wrong number of start and stop events, if a different number of start and stop events happen during the block. We wont be able to record the timestamps or names of any events during the block, but we can keep count on how many start and stop events we saw during the block, to not mess up our stack. A start event increments the balance by one, a stop events decrements. If we are positive at the end of the block, we generate dummy starts, and if we are negative, we generate dummy ends.
 #endif
 
-  char tprintf_buffer[TIP_EVENT_BUFFER_SIZE]; //we use this buffer for the tprint function. If vsnprintf fails due to buffer size, we know that we don't need to record that event, since it won't fit into the event buffer anyway. So we just assert and/or discard the event.
-
   tip_Event_Buffer* first_event_buffer;
   tip_Event_Buffer* current_event_buffer;
 };
@@ -1100,6 +1098,7 @@ struct tip_Global_State{
 };
 
 thread_local tip_Thread_State tip_thread_state;
+thread_local char tip_tprintf_buffer[TIP_EVENT_BUFFER_SIZE]; //we use this buffer for the tprint function. If vsnprintf fails due to buffer size, we know that we don't need to record that event, since it won't fit into the event buffer anyway. So we just assert and/or discard the event. It would be nicer if we could put this in the threadstate, but unfortunately this whould make it so big that a local variable thread state causes stack-overflow. That means we could not do "thread_state = {}" for example, which we need to do in tip_reset. The alternative would be to reset the members individually, which would be prone to bugs when changing the members down the line.
 static tip_Global_State tip_global_state;
 
 // void tip_clear(){
@@ -1116,7 +1115,7 @@ void tip_reset(){
       buffer = next_buffer;
     }
 
-    thread_state = {};
+    *thread_state = {};
   }
 
   tip_global_state.category_name_buffer.destroy();
@@ -1136,16 +1135,16 @@ void tip_reset(){
 const char* tip_tprintf(const char* format, ...){
   va_list args;
   va_start(args, format);
-  int characters_printed = vsnprintf(tip_thread_state.tprintf_buffer, TIP_EVENT_BUFFER_SIZE, format, args);
+  int characters_printed = vsnprintf(tip_tprintf_buffer, TIP_EVENT_BUFFER_SIZE, format, args);
   va_end(args);
 
   TIP_ASSERT(characters_printed > 0 && "vsnprintf returned an error. Please check your format string and arguments!");
   TIP_ASSERT(characters_printed < TIP_EVENT_BUFFER_SIZE && "This name is too long to fit in an event buffer! To fix this error, pick a shorter name or increase the event buffer size using TIP_EVENT_BUFFER_SIZE.");
 
   if(characters_printed < 0 || characters_printed > TIP_EVENT_BUFFER_SIZE)
-    tip_thread_state.tprintf_buffer[0] = '\0';
+    tip_tprintf_buffer[0] = '\0';
 
-  return tip_thread_state.tprintf_buffer;
+  return tip_tprintf_buffer;
 }
 
 void tip_set_memory_limit(uint64_t limit_in_bytes){
