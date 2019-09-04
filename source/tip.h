@@ -15,23 +15,22 @@
 // 
 // 
 // STRUCTURE: This file contains several sections:
-//    @EXAMPLES contains example programms that use various parts of TIP.
-//    If you just want to get it up and running, look here!
+//    @EXAMPLES: Example programs that use various parts of TIP. If you just
+//               want to get it up and running, look here!
 // 
-//    @FEATURE TOGGLES: Lists all macros that can alter the behaviour of TIP.
+//    @FEATURE TOGGLES: A List of all features of TIP that can be en-/disabled
+//                      using defines.
 // 
-//    @API DOCUMENTATION is where you can find the full API documentation.
-//
-//
-
-// USAGE
-//
-// Include this file in whatever places need to refer to it. In ONE C/C++ file, write:
-// #define STB_TRUETYPE_IMPLEMENTATION
-// before the #include of this file. This expands out the actual implementation into that C/C++ file.
-//
-//
-
+//    @INTEGRATION: Macros to define things like asserts and allocation to
+//                  enable integration into your application.
+// 
+//    @API DOCUMENTATION: A complete list of all API functions and macros with
+//                        descriptions.
+// 
+// USAGE: Include this file in whatever places need to refer to it. In ONE C++
+//        file, write: #define STB_TRUETYPE_IMPLEMENTATION before the #include
+//        of this file. This expands out the actual implementation into that
+//        C++ file.
 
 
 //------------------------------------------------------------------------------
@@ -42,20 +41,19 @@
 //------------------------------------------------------------------------------
 // Example 1: Minimal example that records one profiling zone and saves it to a
 // file. This file can then be viewed with the chrome profiling frontend
-#if 0
 
+#if 0
 #define TIP_AUTO_INIT //make TIP take care of initialization
 #define TIP_IMPLEMENTATION //generate implementation in this file
 #include "tip.h"
 
 void main(){
   {
-    TIP_PROFILE_SCOPE("cool stuff happening");
+    tip_zone("cool stuff happening", 1);
   }
   tip_export_current_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
 }
-
 #endif
 //------------------------------------------------------------------------------
 
@@ -64,47 +62,47 @@ void main(){
 // to generate some actually interesting profiling data. You might want to
 // execute this example and open the json file in the chrome frontend, to better
 // understand the control flow and the purpose of each profiling macro.
-#if 0
 
+#if 0
 #define TIP_AUTO_INIT
 #define TIP_IMPLEMENTATION
 #include "tip.h"
 
 void burn_cpu(int index){
-  TIP_PROFILE_FUNCTION();
+  tip_zone_function(1);
   for(int dummy = 0; dummy < index * 1000 + 1000; dummy++){}
 }
 
 void do_stuff(int index);
 
 void main(){
-  TIP_PROFILE_ASYNC_START("Time until 17"); //opening an async zone that will be closed in do_stuff
-  TIP_PROFILE_FUNCTION(); //profile this scope with the name of the function
-  TIP_PROFILE_START("manual_main"); //open a manual zone
+  tip_async_zone_start("Time until 17", 1); //opening an async zone that will be closed in do_stuff
+  tip_zone_function(1); //profile this scope with the name of the function
+  tip_zone_start("manual_main", 1); //open a manual zone
 
   for(int i = 0; i < 20; i++){
-    TIP_PROFILE_SCOPE("scope1"); //profile this scope
+    tip_zone("scope1", 1); //profile this scope
     do_stuff(i);
   }
 
-  TIP_PROFILE_ASYNC_STOP("Time from 5"); //close an async zone that will be started in do_stuff
-  TIP_PROFILE_STOP("manual_main"); //close a manual zone
+  tip_async_zone_stop("Time from 5", 1); //close an async zone that will be started in do_stuff
+  tip_zone_stop(1); //close a manual zone
 
   tip_export_current_state_to_chrome_json("profiling_data.json");
   //open this file with a chrome browser at the URL chrome://tracing
 }
 
 void do_stuff(int index){
-  TIP_PROFILE_FUNCTION();
+  tip_zone_function(1);
 
   if(index == 5)
-    TIP_PROFILE_ASYNC_START("Time from 5"); //close the async zone that was started in main
+    tip_async_zone_start("Time from 5", 1); //close the async zone that was started in main
 
   if(index == 17)
-    TIP_PROFILE_ASYNC_STOP("Time until 17"); //open an async zone that will be closed in main
+    tip_async_zone_stop("Time until 17", 1); //open an async zone that will be closed in main
 
   {
-    TIP_PROFILE_SCOPE_COND("If even, profile this scope.", index % 2 == 0);
+    tip_zone_cond("If even, profile this scope.", 1, index % 2 == 0);
     burn_cpu(index);
   }
   burn_cpu(index);
@@ -124,12 +122,12 @@ void do_stuff(int index){
 // don't define a feature toggle, the code for that feature will not be compiled
 // and thus has no impact on the runtime performance.
 
-// #define TIP_AUTO_INIT: Makes tip take care of initialization. tip_global_init and
-// tip_thread_init will be automatically called, when necessairy.
+// #define TIP_AUTO_INIT: Makes tip take care of initialization. tip_global_init
+// and tip_thread_init will be automatically called, when necessairy.
 // 
-// #define TIP_USE_RDTSC: Makes TIP use the RDTSC instruction to measure time. This is
-// the most accurate and performant way to record the timestamps. Currently,
-// this is only supported when compiling for Win32.
+// #define TIP_USE_RDTSC: Makes TIP use the RDTSC instruction to measure time.
+// This is the most accurate and performant way to record the timestamps.
+// Currently, this is only supported when compiling for Win32.
 // 
 // #define TIP_MEMORY_LIMIT: Allows for the specification of a memory limit via
 // tip_set_memory_limit that TIP will not violate. Also lets TIP handle out-of-
@@ -142,10 +140,13 @@ void do_stuff(int index){
 //------------------------------------------------------------------------------
 //----------------------------@INTEGRATION--------------------------------------
 //------------------------------------------------------------------------------
-// To make the integration of TIP into your codebase easier, you can replace functionality like memory allocation and asserts here. You can also set the size of TIPs event buffers. These buffers will contain the profiling events at runtime.
+// To make the integration of TIP into your codebase easier, you can replace
+// functionality like memory allocation and asserts here. You can also set the
+// size of TIPs event buffers. These buffers will contain the profiling events
+// at runtime.
 
 #ifndef TIP_API
-#define TIP_API // Use this to define function prefixes for API functions like dll export/import.
+#define TIP_API // Use this to define API-function prefixes like dll export.
 #endif
 
 #ifndef TIP_ASSERT
@@ -305,7 +306,7 @@ struct tip_Dynamic_Array{
     if(count == 0)
       return;
 
-    assert((index + count <= size) && "You cannot remove past the end of the array!");
+    TIP_ASSERT((index + count <= size) && "You cannot remove past the end of the array!");
 
     if(index != size - count)
       memcpy(data + index, data + index + count, ((size - count) - index) * sizeof(T));
@@ -1140,6 +1141,21 @@ static tip_Global_State tip_global_state;
 //   //@TODO make this thread-safe
 // }
 
+bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
+  #ifdef TIP_AUTO_INIT
+    if(!tip_thread_state.initialized){
+      if(!tip_global_state.initialized){
+        tip_global_init();
+      }
+      return tip_thread_init();
+    }
+    return true;
+  #else
+    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
+    return tip_thread_state.initialized;
+  #endif
+}
+
 //@TODO make this thread-safe
 void tip_reset(){
   for(auto thread_state : tip_global_state.thread_states){
@@ -1264,21 +1280,6 @@ uint64_t tip_get_category_filter(){
 
 bool tip_does_category_pass_filter(uint64_t category){
   return category & tip_global_state.category_filter;
-}
-
-bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
-  #ifdef TIP_AUTO_INIT
-    if(!tip_thread_state.initialized){
-      if(!tip_global_state.initialized){
-        tip_global_init();
-      }
-      return tip_thread_init();
-    }
-    return true;
-  #else
-    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
-    return tip_thread_state.initialized;
-  #endif
 }
 
 bool tip_set_category_name(uint64_t category_id, const char* category_name){

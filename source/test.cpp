@@ -71,7 +71,7 @@ void main(){
 
 }
 #endif
-#define e3
+#define e2
 
 #ifdef e1
 #define TIP_AUTO_INIT //make TIP take care of initialization
@@ -91,7 +91,6 @@ void main(){
 
 #define TIP_AUTO_INIT
 #define TIP_IMPLEMENTATION
-#define TIP_EVENT_BUFFER_SIZE 1024
 #include "tip.h"
 
 void burn_cpu(int index){
@@ -99,36 +98,39 @@ void burn_cpu(int index){
   for(int dummy = 0; dummy < index * 1000 + 1000; dummy++){}
 }
 
+void do_stuff(int index);
+
+void main(){
+  tip_async_zone_start("Time until 17", 1); //opening an async zone that will be closed in do_stuff
+  tip_zone_function(1); //profile this scope with the name of the function
+  tip_zone_start("manual_main", 1); //open a manual zone
+
+  for(int i = 0; i < 20; i++){
+    tip_zone("scope1", 1); //profile this scope
+    do_stuff(i);
+  }
+
+  tip_async_zone_stop("Time from 5", 1); //close an async zone that will be started in do_stuff
+  tip_zone_stop(1); //close a manual zone
+
+  tip_export_current_state_to_chrome_json("profiling_data.json");
+  //open this file with a chrome browser at the URL chrome://tracing
+}
+
 void do_stuff(int index){
   tip_zone_function(1);
 
   if(index == 5)
-    tip_async_zone_start("Time from 5", 1);
+    tip_async_zone_start("Time from 5", 1); //close the async zone that was started in main
 
   if(index == 17)
-    tip_async_zone_stop("Time until 17", 1);
+    tip_async_zone_stop("Time until 17", 1); //open an async zone that will be closed in main
 
   {
-    tip_zone_cond("If even, profile this scope.", index % 2 == 0, 1);
+    tip_zone_cond("If even, profile this scope.", 1, index % 2 == 0);
     burn_cpu(index);
   }
   burn_cpu(index);
-}
-
-void main(){
-  tip_async_zone_start("Time until 17", 1);
-  tip_zone_function(1);
-  tip_zone_start("manual_main", 1);
-
-  for(int i = 0; i < 20; i++){
-    tip_zone_cond("scope1", true, 1);
-    do_stuff(i);
-  }
-
-  tip_async_zone_stop("Time from 5", 1);
-  tip_zone_stop(1);
-
-  tip_export_current_state_to_chrome_json("profiling_data.json", 1);
 }
 
 #endif
