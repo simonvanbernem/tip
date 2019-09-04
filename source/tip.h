@@ -18,20 +18,9 @@
 //    @EXAMPLES contains example programms that use various parts of TIP.
 //    If you just want to get it up and running, look here!
 // 
-//    @API DOCUMENTATION is where you can find the full API documentation.
-// This is a tiny instrumenting profiler (TIP). You can use this library to
-// measure how long certain parts of your code took to execute, by using
-// provided profiling macros. You can profile scopes, functions, set manual
-// zones and record asynchronous zones. At any time, you can query the gathered
-// profiling-data into a binary snapshot, which can be exported to a file
-// readable by the chrome profiling frontend (URL chrome://tracing in any chrome
-// browser), or you can write a custom export function for it.
+//    @FEATURE TOGGLES: Lists all macros that can alter the behaviour of TIP.
 // 
-// TIP is shipped as a single-header library: The header and implementation are
-// both contained in this file
-
-// This file contains:
-
+//    @API DOCUMENTATION is where you can find the full API documentation.
 //
 //
 
@@ -131,19 +120,29 @@ void do_stuff(int index){
 //------------------------------------------------------------------------------
 //--------------------------@FEATURE TOGGLES------------------------------------
 //------------------------------------------------------------------------------
+// You can define the following values to alter the behaviour of TIP. If you
+// don't define a feature toggle, the code for that feature will not be compiled
+// and thus has no impact on the runtime performance.
 
-// TIP_AUTO_INIT
-// TIP_WINDOWS
-// TIP_USE_RDTSC
-// TIP_MEMORY_LIMIT
-// TIP_GLOBAL_TOGGLE
+// #define TIP_AUTO_INIT: Makes tip take care of initialization. tip_global_init and
+// tip_thread_init will be automatically called, when necessairy.
+// 
+// #define TIP_USE_RDTSC: Makes TIP use the RDTSC instruction to measure time. This is
+// the most accurate and performant way to record the timestamps. Currently,
+// this is only supported when compiling for Win32.
+// 
+// #define TIP_MEMORY_LIMIT: Allows for the specification of a memory limit via
+// tip_set_memory_limit that TIP will not violate. Also lets TIP handle out-of-
+// memory gracefully, once the global state has been successfully initialized.
+
+// #define TIP_GLOBAL_TOGGLE: Recording of profiling-events can be enabled and
+// disabled by setting a global toggle via tip_set_global_toggle. The toggle
+// affects all threads.
 
 //------------------------------------------------------------------------------
-//------------------------------@DEFINES----------------------------------------
+//----------------------------@INTEGRATION--------------------------------------
 //------------------------------------------------------------------------------
-
-//------------------------------------------------------------------------------
-//Codebase integration: TIP provides the option to replace functionality like asserts and memory allocation.
+// To make the integration of TIP into your codebase easier, you can replace functionality like memory allocation and asserts here. You can also set the size of TIPs event buffers. These buffers will contain the profiling events at runtime.
 
 #ifndef TIP_API
 #define TIP_API // Use this to define function prefixes for API functions like dll export/import.
@@ -167,6 +166,7 @@ void do_stuff(int index){
 #endif
 
 #include <stdint.h>
+//------------------------------------------------------------------------------
 
 
 // used internally
@@ -614,6 +614,14 @@ TIP_API bool tip_does_category_pass_filter(uint64_t category);
 
 TIP_API bool tip_set_category_name(uint64_t category, const char* category_name);
 // Sets the name of a certain category. This name may be usefull for a frontend.
+
+const uint64_t tip_info_category = 1llu << 63;
+// This value represents the category that TIP will use to record profiling
+// events concerning its internals, like buffer-allocation or snapshot creation.
+
+const uint64_t tip_all_categories = UINT64_MAX;
+// This value represents all categories.
+
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -630,96 +638,94 @@ TIP_API bool tip_set_category_name(uint64_t category, const char* category_name)
 // 
 // Every once in a while, a call to these functions will take signifcantly
 // longer than usual, because TIP has to allocate a new buffer to store the
-// profiling information in. This will distort the accuracy of the data, and you
-// may consider increasing TIP_EVENT_BUFFER_SIZE, so fewer, bigger buffers will
-// be allocated. TIPs memory footprint and in turn the frequency of buffer
-// allocations scales with the number of profiling events and the length of the
-// event names.
+// profiling information in. This will distort the accuracy of the data. If this
+// distortion becomes too big, consider increasing TIP_EVENT_BUFFER_SIZE to
+// allocate fewer, bigger buffers. TIPs memory footprint and in turn the
+// frequency of buffer allocations scales with the number of profiling events
+// and the length of the event names.
 // 
-// Most macros take a name argument. This name is used for display in frontends
-// and to match openening and closing profiling sections.
+// Most functions take a name argument. This name can be displayed in a frontend
+// and is also used to match the start- and stop-call of async profiling zones.
+// 
+// All functions take a categories argument. Categories are always powers of two
+// and can be given names by calling tip_set_category_name. The argument can
+// consist of one ore more categories OR-ed together. A category filter can be
+// set by calling tip_set_category_filter, that will discard any events that
+// don't belong to any category present in the filter. If a single category of
+// an event is present in the filter, the event will be recorded. This way you
+// can reduce the amount of data recorded and focus on a specific area of code,
+// without needing to remove the profiling functions in other areas.
 
-// Manual profilers:
+//------------------------------------------------------------------------------
+// Manual profilers: Start and stop a zone manually.
 
 TIP_API void tip_zone_start(const char* name, uint64_t categories);
-//Starts a profiling zone with the given name and the given categories. Use
+// Starts a profiling zone with the given name and the given categories. Use
 // tip_zone_stop to stop the zone.
 
 TIP_API void tip_zone_stop(uint64_t categories);
-//Stops the most recently started profiling zone, that was started by
+// Stops the most recently started profiling zone, that was started by
 // tip_zone_start or a tip_zone...-macro.
 
 TIP_API void tip_async_zone_start(const char* name, uint64_t categories);
-//Starts an async profiling zone with the given name and the given categories.
-// Async zones don't have to adhere to the stack-like nature of normal zones.
-// To put it formally: The number of zone starts and stops between the begin and
-// end of a an async zone does not have to be equal. You can for example start
+// Starts an async profiling zone with the given name and the given categories.
+// Async zones don't have to adhere to the stack-like nature of normal zones. To
+// put it formally: The number of zone-starts and -stops between the start and
+// stop of a an async zone does not have to be equal. You can for example start
 // an async zone on one thread and end it on another, or start two different
 // async zones 1 and 2 and end zone 1 before 2. This is not possible with normal
 // zones.
 
 TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
-//Stops an async profiling zone with the same name, that was started with
+// Stops an async profiling zone with the same name, that was started with
 // tip_async_zone_start.
+
+//------------------------------------------------------------------------------
+// Scoped profilers: These profilers will start a zone on the line they are
+// declared on, and end it at the end of the scope (in usual destructor-order)
+
 
 //for tip_zone("test", 1), placed on line 201, this will generate: tip_Scope_Profiler profauto201("test", true, 1);
 #define tip_zone(/*const char* */ name, /*uint64_t*/ categories)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, true, categories);
+// Starts a profiling zone with a given name and the given categories on the
+// line it is declared and automatically stops that zone on scope-exit (in usual
+// destructor order). Internally, this starts the zone in its constructor and
+// stops in it in its destructor. The name parameter only needs to be valid
+// during the initial call, not for the entire scope.
 
-#define tip_zone_cond(/*const char* */ name, /*uint64_t*/ categories, condition)\
+#define tip_zone_cond(/*const char* */ name, /*uint64_t*/ categories, /*bool*/ condition)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, condition, categories);
+// Behaves like tip_zone if the condition is true. Does nothing otherwise.
 
 #define tip_zone_function(/*uint64_t*/ categories)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
+// Behaves like tip_zone with the name-argument set to the name of the surrounding function.
+
+
+//------------------------------------------------------------------------------
+// Utility: These function provide various utility functionality.
 
 TIP_API const char* tip_tprintf(const char* format, ...);
-//Provides sprintf-like functionality with a buffer that is managed by tip. The
+// Provides sprintf-like functionality with a buffer that is managed by tip. The
 // string returned by this stays valid until the next call to tip_tprintf on the
-// same thread. This is intended to be used when you want to generate dynamic
-// zone-names, like so:
-//tip_zone(tip_tprintf("%s: %s,%llu", "hi", dynamic_string, i), tip_info_category);
-
+// same thread. The buffer is a static buffer that is of size TIP_EVENT_BUFFER_SIZE,
+// since longer names cannot be recorded into a TIP event buffer anyway. This
+// function is intended to be used to generate dynamic zone-names, like so:
+// 
+// tip_zone(tip_tprintf("%s: %s,%d", "hi", dynamic_string, i), tip_info_category);
+// tip_zone_start(tip_tprintf("zone number %d", counter), 1);
+//------------------------------------------------------------------------------
 
 TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size = 100000);
-//
-
-
-// The following macros are available:
-// 
-// Scoped Profilers:
-// 
-// TIP_PROFILE_SCOPE(name)
-// Opens a profiling section in its constructor and closes it in it's destructor.
-// 
-// TIP_PROFILE_SCOPE_COND(name, condition)
-// Opens a profiling section in its constructor and closes it in it's destructor
-// if condition evaluates to true
-// 
-// TIP_PROFILE_FUNCTION()
-// Opens a profiling section in its constructor and closes it in it's destructor.
-// Uses the name of the enclosing function.
-// 
-// 
-// Manual profilers:
-// 
-// TIP_PROFILE_START(name)
-// Opens a profiling section-
-// Use this in conjunction with TIP_PROFILE_STOP (match the names).
-// 
-// TIP_PROFILE_STOP(name)
-// Closes a profiling section.
-// Use this in conjunction with TIP_PROFILE_START (match the names).
-// 
-// 
-// Async profilers:
-// 
-// TIP_PROFILE_ASYNC_START(name)
-// Opens an async profiling section.
-// Use this in conjunction with TIP_PROFILE_ASYNC_STOP (match the names).
-// 
-// TIP_PROFILE_ASYNC_STOP(name)
-// Closes an async profiling section.
-// Use this in conjunction with TIP_PROFILE_ASYNC_START (match the names).
+// Measures the average duration of a single profiling event (a call to
+// tip_zone_start or tip_zone_async_start for example) over a given sample size.
+// This includes any time spend on buffer allocation and additional functionality
+// like checks for the memory limit or global toggle. If the memory limit is hit
+// during this test, the results might be drastically off, since events take a
+// lot less time when they are discarded.
+// The measurement uses a control group to gain accurate results. If you have
+// ideas on how to improve this, tell me! (I am no expert on micro-profiling).
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -780,18 +786,29 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// Misc:
+// Low level: In case you find the interface of TIP lacking, you can create your
+// own ways of saving profiling events using these low level functions.
 
-const uint64_t tip_info_category = 1llu << 63;
-const uint64_t tip_all_categories = UINT64_MAX;
-
-TIP_API void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories); //uses the current time, calculates strlen
 TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
+// Saves a profiling event to the buffer.
+// If TIP_GLOBAL_TOGGLE is defined and the global toggle is disabled, this
+// function does nothing.
+// If TIP_MEMORY_LIMIT is defined and saving this event would violate the memory
+// limit, this function does nothing.
+// If the categories argument does not pass the category filter, this function
+// does nothing.
+
+TIP_API void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories);
+// Behaves like the previous function. The timestamp argument is set to the
+// current time, and the name_length_including_terminator argument is calculated
+// based off of the name argument.
+
 TIP_API uint64_t tip_get_timestamp();
+// Returns the current time as a timestamp. The value of the timestamp is NOT in
+// seconds, but some arbitrary frequency depending on the internal clock used.
+//------------------------------------------------------------------------------
 
-TIP_API int64_t tip_scoped_profiler_push_name(const char* data, uint64_t size);
-TIP_API char* tip_scoped_profiler_pop_name(uint64_t index);
-
+// Here comes more implementation.
 struct tip_Conditional_Scope_Profiler{
   int64_t condition = false;
   uint64_t categories;
