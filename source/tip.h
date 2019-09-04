@@ -596,24 +596,29 @@ TIP_API void tip_set_category_filter(uint64_t bitmask);
 // discarded, if its category does not pass the category filter. A category
 // passes, if the value of the category ANDed with the value of the category
 // filter is non-zero.
+// The global state doesn't need to be initialized to call this function.
 
 TIP_API void tip_add_category_filter(uint64_t bitmask);
 // Sets the given category-bits in the category filter, making events with these
 // categories pass the filter.
+// The global state doesn't need to be initialized to call this function.
 
 TIP_API void tip_remove_category_filter(uint64_t bitmask);
 // Unsets the given category-bits in the category filter, making events with
 // these categories not pass the filter.
+// The global state doesn't need to be initialized to call this function.
 
 TIP_API uint64_t tip_get_category_filter();
 // Gets the current category filter.
+// The global state doesn't need to be initialized to call this function.
 
 TIP_API bool tip_does_category_pass_filter(uint64_t category);
 // Returns true if the category passes the current category filter,
 // returns false otherwise. This is simply a bitwise AND.
+// The global state doesn't need to be initialized to call this function.
 
 TIP_API bool tip_set_category_name(uint64_t category, const char* category_name);
-// Sets the name of a certain category. This name may be usefull for a frontend.
+// Sets the name of a certain category. This name may be used by a frontend.
 
 const uint64_t tip_info_category = 1llu << 63;
 // This value represents the category that TIP will use to record profiling
