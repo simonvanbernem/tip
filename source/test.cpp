@@ -91,6 +91,7 @@ void main(){
 
 #define TIP_AUTO_INIT
 #define TIP_IMPLEMENTATION
+#define TIP_MEMORY_LIMIT
 #include "tip.h"
 
 void burn_cpu(int index){

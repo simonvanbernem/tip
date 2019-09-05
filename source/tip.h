@@ -166,18 +166,15 @@ void do_stuff(int index){
 #define TIP_EVENT_BUFFER_SIZE 1024 * 1024
 #endif
 
-#ifndef TIP_ATOMIC_ADD
-#if defined(_MSC_VER)
-#define TIP_ATOMIC_ADD _InterlockedExchangeAdd64
-#elif defined(__GNUC__)
-#define TIP_ATOMIC_ADD __sync_fetch_and_add
-#endif
-#endif
-
 #include <stdint.h>
 //------------------------------------------------------------------------------
 
 // used internally
+
+#define TIP_64BIT _M_X64
+#define TIP_WINDOWS _MSC_VER
+#define TIP_GCC __GNUC__
+
 TIP_API uint32_t tip_strlen(const char* string);
 TIP_API bool tip_string_is_equal(char* string1, char* string2);
 
@@ -233,7 +230,7 @@ struct tip_Dynamic_Array{
 
     if (max_growth_size == 0) {
       //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
-      data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
+      data = (T*) TIP_REALLOC(data, size_t(sizeof(T) * new_capacity));
       capacity = new_capacity;
     }
     else {
@@ -293,8 +290,7 @@ struct tip_Dynamic_Array{
       return false;
 
     uint64_t new_size = size + number_of_elements;
-
-    memcpy(data + size, elements, number_of_elements * sizeof(T));
+    memcpy(data + size, elements, size_t(number_of_elements * sizeof(T)));
 
     size = new_size;
     return true;
@@ -880,7 +876,7 @@ uint64_t tip_get_serialized_value_size(T value){
 
 
 #ifdef TIP_IMPLEMENTATION
-#ifdef _MSC_VER
+#ifdef TIP_WINDOWS
 #pragma warning(push)
 #pragma warning(disable:4996)
 #endif
@@ -994,7 +990,7 @@ void tip_unlock_mutex(Mutex mutex){
 
 //TIMING
 #ifdef TIP_USE_RDTSC
-#include <intrin.h>
+unsigned __int64 __rdtsc();
 #endif
 
 uint64_t tip_get_timestamp(){
@@ -1134,7 +1130,9 @@ struct tip_Global_State{
   //To work around this, we use a second limit, the soft limit, that is lower than the hard limit. The core idea is that there is a maximum upper bound of how much we would overrun the limit, if the worst-case race-condition happened. That worst case race-condition is: we have exactly enough memory so that one thread can allocate a buffer, each thread does the check but gets swapped out for another one before it does the allocation, so that all threads end up thinking they can allocate, even though there is only enough room for one more allocation. So the maximum amount of memory we would overshoot the limit in the worst case race-condition is ((#threads - 1) * maximum allocation size). If we subtract that amount from the hard limit, we get our soft limit that guarantees us that we will not overrund the hard one, even in the worst case race condition. That way we avoid taking a critical section.
   //To actually make this happen, we have to know what the maximum allocation size can be. We only do two types of allocations: allocating an event buffer, of which the size is known and growing a dynamic array. To put an upper bound on the dynamic array growth, which normaly grows by a factor and thus has none, we introduce a limit in the data structure itsself.
   //Once an attempt to save a profiling zone hits the limit, we set a flag that prevents any other events from beeing recorded. Since each thread has different buffers, many other events might still be able to record, but it would be very confusing to just "miss" the events of one thread while the others keep going.
+
   volatile uint64_t occupied_memory;
+
   uint64_t hard_memory_limit;
   int64_t soft_memory_limit; //this can go negative if the hard limit is really low, and a new thread gets initialized. it will subtract TIP_EVENT_BUFFER_SIZE from this, which might be bigger than the hard limit itsself
   bool blocked_by_memory_limit = false; //if the soft limit is hit, we stop recording of any events, including those that wouldn't need an allocation, because it would be super confusing if some threads would continue on recording while another one doesn't
@@ -1151,6 +1149,18 @@ struct tip_Global_State{
 thread_local tip_Thread_State tip_thread_state;
 thread_local char tip_tprintf_buffer[TIP_EVENT_BUFFER_SIZE]; //we use this buffer for the tprint function. If vsnprintf fails due to buffer size, we know that we don't need to record that event, since it won't fit into the event buffer anyway. So we just assert and/or discard the event. It would be nicer if we could put this in the threadstate, but unfortunately this whould make it so big that a local variable thread state causes stack-overflow. That means we could not do "thread_state = {}" for example, which we need to do in tip_reset. The alternative would be to reset the members individually, which would be prone to bugs when changing the members down the line.
 static tip_Global_State tip_global_state;
+
+void tip_atomically_add_to_occupied_memory(uint64_t amount){
+#if defined(TIP_64BIT) && defined(TIP_WINDOWS)
+  _InterlockedExchangeAdd64((volatile __int64* ) &tip_global_state.occupied_memory, (__int64) amount);
+#elif defined(TIP_64BIT) && defined(TIP_GCC)
+  __sync_fetch_and_add(&tip_global_state.occupied_memory, amount);
+#else
+  tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
+  tip_global_state.occupied_memory += amount;
+  tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
+#endif
+}
 
 // void tip_clear(){
 //   //@TODO make this thread-safe
@@ -1356,8 +1366,8 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
     return nullptr;
   }
 
-  TIP_ATOMIC_ADD((volatile int64_t*) &tip_global_state.occupied_memory, (int64_t) difference_to_old_allocation_size);
-  return TIP_REALLOC(previous_allocation, allocation_size);
+  tip_atomically_add_to_occupied_memory(difference_to_old_allocation_size);
+  return TIP_REALLOC(previous_allocation, (size_t) allocation_size);
 }
 
 void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
@@ -1413,7 +1423,7 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
   if(!is_type_info_event(type) && type != tip_Event_Type::stop){
     *((uint64_t*)data_pointer) = name_length_including_terminator;
     data_pointer += sizeof(name_length_including_terminator);
-    memcpy(data_pointer, name, name_length_including_terminator);
+    memcpy(data_pointer, name, (size_t) name_length_including_terminator);
     data_pointer += name_length_including_terminator;
   }
 
@@ -1560,7 +1570,7 @@ double tip_global_init(){
   if(tip_global_state.initialized)
     return 1. / tip_global_state.clocks_per_second;
 
-#if defined(TIP_USE_RDTSC) && defined(TIP_WINDOWS) 
+#if defined(TIP_USE_RDTSC) && defined(TIP_WINDOWS)
   uint64_t reliable_start = tip_get_reliable_timestamp();
   uint64_t rdtsc_start = __rdtsc();
 
@@ -1790,7 +1800,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
   auto printf_to_file_buffer = [&](const char* format, ...){
     va_list args;
     va_start(args, format);
-    int characters_to_print = vsnprintf(file_buffer.data + file_buffer.size, file_buffer.capacity - file_buffer.size, format, args);
+    int characters_to_print = vsnprintf(file_buffer.data + file_buffer.size, size_t(file_buffer.capacity - file_buffer.size), format, args);
     va_end(args);
 
     TIP_ASSERT(characters_to_print > 0);
@@ -1799,11 +1809,11 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
       file_buffer.reserve(file_buffer.size + characters_to_print + 1);
 
       va_start(args, format);
-      int printed_characters = vsnprintf(file_buffer.data + file_buffer.size, file_buffer.capacity - file_buffer.size, format, args);
+      int printed_characters = vsnprintf(file_buffer.data + file_buffer.size, size_t(file_buffer.capacity - file_buffer.size), format, args);
       va_end(args);
 
       (void) printed_characters; //suppress warning when compiling in release
-      TIP_ASSERT(printed_characters > 0 && printed_characters == characters_to_print && (printed_characters + 1) <= (file_buffer.capacity - file_buffer.size));
+      TIP_ASSERT(printed_characters > 0 && printed_characters == characters_to_print && uint64_t(printed_characters + 1) <= (file_buffer.capacity - file_buffer.size));
     }
 
     file_buffer.size += characters_to_print;
@@ -1963,7 +1973,7 @@ void tip_free_snapshot(tip_Snapshot snapshot){
   snapshot.category_name_buffer.destroy();
 }
 
-#ifdef _MSC_VER
+#ifdef TIP_WINDOWS
 #pragma warning(pop)
 #endif
 #endif //TIP_IMPLEMENTATION
