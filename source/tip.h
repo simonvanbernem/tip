@@ -255,7 +255,7 @@ struct tip_Dynamic_Array{
       return true;
 
     if(size == 0)
-      return grow_to_exact_capacity(tip_max(count * 2, 512llu));
+      return grow_to_exact_capacity(tip_max(count * 2, (uint64_t) 512));
 
     return grow_to_exact_capacity(tip_max(size * 2, size + count));
   }
@@ -981,6 +981,10 @@ void tip_unlock_mutex(Mutex mutex){
 }
 
 //TIMING
+#ifdef TIP_USE_RDTSC
+#include <intrin.h>
+#endif
+
 uint64_t tip_get_timestamp(){
 #ifdef TIP_USE_RDTSC
   return __rdtsc();
@@ -1084,7 +1088,6 @@ uint64_t tip_get_reliable_timestamp_frequency(){
 #endif
 
 #include <stdio.h>
-#include <intrin.h>
 
 struct tip_Event_Buffer{
   uint8_t* current_position;
