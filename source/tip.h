@@ -166,9 +166,16 @@ void do_stuff(int index){
 #define TIP_EVENT_BUFFER_SIZE 1024 * 1024
 #endif
 
+#ifndef TIP_ATOMIC_ADD
+#if defined(_MSC_VER)
+#define TIP_ATOMIC_ADD _InterlockedExchangeAdd64
+#elif defined(__GNUC__)
+#define TIP_ATOMIC_ADD __sync_fetch_and_add
+#endif
+#endif
+
 #include <stdint.h>
 //------------------------------------------------------------------------------
-
 
 // used internally
 TIP_API uint32_t tip_strlen(const char* string);
@@ -873,6 +880,11 @@ uint64_t tip_get_serialized_value_size(T value){
 
 
 #ifdef TIP_IMPLEMENTATION
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4996)
+#endif
+
 
 void tip_zone_start(const char* name, uint64_t categories){
 #ifdef TIP_GLOBAL_TOGGLE
@@ -1344,7 +1356,7 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
     return nullptr;
   }
 
-  _InterlockedExchangeAdd64((volatile int64_t*) &tip_global_state.occupied_memory, difference_to_old_allocation_size);
+  TIP_ATOMIC_ADD((volatile int64_t*) &tip_global_state.occupied_memory, (int64_t) difference_to_old_allocation_size);
   return TIP_REALLOC(previous_allocation, allocation_size);
 }
 
@@ -1582,7 +1594,8 @@ double tip_global_init(){
     tip_global_state.category_name_indices[i] = -1;
 
   //default category is 1 << 63, so the highest bit.
-  if(tip_global_state.category_name_buffer.insert("TIP info", tip_strlen("TIP info") + 1))
+  auto info_category_name = "TIP info";
+  if(tip_global_state.category_name_buffer.insert((char*) info_category_name, tip_strlen(info_category_name) + 1))
     tip_global_state.category_name_indices[63] = 0;
 
   tip_global_state.process_id = tip_get_process_id();
@@ -1607,7 +1620,7 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
 
   tip_lock_mutex(tip_global_state.thread_states_mutex);
 
-  for(int i = 0; i < tip_global_state.thread_states.size; i++){
+  for(uint64_t i = 0; i < tip_global_state.thread_states.size; i++){
 
     tip_Thread_State* thread_state = tip_global_state.thread_states[i];
     snapshot.thread_ids.insert(thread_state->thread_id);
@@ -1737,10 +1750,9 @@ int64_t tip_export_current_state_to_chrome_json(const char* file_name, bool prof
   return file_size;
 }
 
-
 int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* file_name, bool profile_export_and_include_in_the_output){
-  FILE* file = nullptr;
-  fopen_s(&file, file_name, "w+");
+  FILE* file = fopen(file_name, "w+");
+
   TIP_ASSERT(file && "Failed to open the file.");
   if(!file)
     return -1;
@@ -1763,7 +1775,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
 
   uint64_t first_timestamp = snapshot.events[0][0].timestamp;
 
-  for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
+  for(uint64_t thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     if(snapshot.events[thread_index].size > 0)
       first_timestamp = tip_min(first_timestamp, snapshot.events[thread_index][0].timestamp);
   }
@@ -1783,7 +1795,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
 
     TIP_ASSERT(characters_to_print > 0);
     
-    if(characters_to_print + 1 > file_buffer.capacity - file_buffer.size){
+    if((uint64_t) characters_to_print + 1 > file_buffer.capacity - file_buffer.size){
       file_buffer.reserve(file_buffer.size + characters_to_print + 1);
 
       va_start(args, format);
@@ -1853,7 +1865,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
   //the frontend wants timestamps and durations in units of microseconds. We convert our timestamp by normalizing to units of seconds (with clocks_per_second) and then mulitplying by 10^6. Printing the numbers with 3 decimal places effectively yields a resolution of one nanosecond
   auto timestamp_to_microseconds = [&](uint64_t timestamp){return double(timestamp - first_timestamp) * (1000000 / snapshot.clocks_per_second);};
 
-  for(int thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
+  for(uint64_t thread_index = 0; thread_index < snapshot.thread_ids.size; thread_index++){
     int32_t thread_id = snapshot.thread_ids[thread_index];
 
     for(tip_Event event : snapshot.events[thread_index]){
@@ -1944,13 +1956,16 @@ void tip_free_snapshot(tip_Snapshot snapshot){
   snapshot.names.name_buffer.destroy();
   snapshot.names.name_indices.destroy();
   snapshot.thread_ids.destroy();
-  for(int i = 0; i < snapshot.events.size; i++){
+  for(uint64_t i = 0; i < snapshot.events.size; i++){
     snapshot.events[i].destroy();
   }
   snapshot.events.destroy();
   snapshot.category_name_buffer.destroy();
 }
 
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #endif //TIP_IMPLEMENTATION
 
 // MIT License
