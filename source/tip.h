@@ -1304,7 +1304,7 @@ uint64_t tip_get_category_filter(){
 }
 
 bool tip_does_category_pass_filter(uint64_t category){
-  return category & tip_global_state.category_filter;
+  return (category & tip_global_state.category_filter) == 1;
 }
 
 bool tip_set_category_name(uint64_t category_id, const char* category_name){
