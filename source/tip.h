@@ -171,9 +171,17 @@ void do_stuff(int index){
 
 // used internally
 
+#ifndef TIP_64BIT
 #define TIP_64BIT _M_X64
+#endif
+
+#ifndef TIP_WINDOWS
 #define TIP_WINDOWS _MSC_VER
+#endif
+
+#ifndef TIP_GCC
 #define TIP_GCC __GNUC__
+#endif
 
 TIP_API uint32_t tip_strlen(const char* string);
 TIP_API bool tip_string_is_equal(char* string1, char* string2);
@@ -248,6 +256,7 @@ struct tip_Dynamic_Array{
 
 #else
     data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
+  TIP_ASSERT(data && "out of memory!");
     capacity = new_capacity;
 #endif
 
@@ -1119,6 +1128,7 @@ struct tip_Thread_State{
 struct tip_Global_State{
   bool initialized = false;
 
+  volatile uint64_t occupied_memory = 0;
   uint64_t category_filter = UINT64_MAX;
   tip_Dynamic_Array<char> category_name_buffer;
   int64_t category_name_indices[64]; //for each category possible (64 bits so 64 categories), contains the index to the start of this categories name in the category_name_buffer (or -1 if no name)
@@ -1130,8 +1140,6 @@ struct tip_Global_State{
   //To work around this, we use a second limit, the soft limit, that is lower than the hard limit. The core idea is that there is a maximum upper bound of how much we would overrun the limit, if the worst-case race-condition happened. That worst case race-condition is: we have exactly enough memory so that one thread can allocate a buffer, each thread does the check but gets swapped out for another one before it does the allocation, so that all threads end up thinking they can allocate, even though there is only enough room for one more allocation. So the maximum amount of memory we would overshoot the limit in the worst case race-condition is ((#threads - 1) * maximum allocation size). If we subtract that amount from the hard limit, we get our soft limit that guarantees us that we will not overrund the hard one, even in the worst case race condition. That way we avoid taking a critical section.
   //To actually make this happen, we have to know what the maximum allocation size can be. We only do two types of allocations: allocating an event buffer, of which the size is known and growing a dynamic array. To put an upper bound on the dynamic array growth, which normaly grows by a factor and thus has none, we introduce a limit in the data structure itsself.
   //Once an attempt to save a profiling zone hits the limit, we set a flag that prevents any other events from beeing recorded. Since each thread has different buffers, many other events might still be able to record, but it would be very confusing to just "miss" the events of one thread while the others keep going.
-
-  volatile uint64_t occupied_memory;
 
   uint64_t hard_memory_limit;
   int64_t soft_memory_limit; //this can go negative if the hard limit is really low, and a new thread gets initialized. it will subtract TIP_EVENT_BUFFER_SIZE from this, which might be bigger than the hard limit itsself
