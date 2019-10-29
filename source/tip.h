@@ -43,7 +43,6 @@
 // file. This file can then be viewed with the chrome profiling frontend
 
 #if 0
-#define TIP_AUTO_INIT //make TIP take care of initialization
 #define TIP_IMPLEMENTATION //generate implementation in this file
 #include "tip.h"
 
@@ -64,7 +63,6 @@ void main(){
 // understand the control flow and the purpose of each profiling macro.
 
 #if 0
-#define TIP_AUTO_INIT
 #define TIP_IMPLEMENTATION
 #include "tip.h"
 
@@ -122,9 +120,6 @@ void do_stuff(int index){
 // don't define a feature toggle, the code for that feature will not be compiled
 // and thus has no impact on the runtime performance.
 
-// #define TIP_AUTO_INIT: Makes tip take care of initialization. tip_global_init
-// and tip_thread_init will be automatically called, when necessairy.
-// 
 // #define TIP_USE_RDTSC: Makes TIP use the RDTSC instruction to measure time.
 // This is the most accurate and performant way to record the timestamps.
 // Currently, this is only supported when compiling for Win32.
@@ -132,10 +127,6 @@ void do_stuff(int index){
 // #define TIP_MEMORY_LIMIT: Allows for the specification of a memory limit via
 // tip_set_memory_limit that TIP will not violate. Also lets TIP handle out-of-
 // memory gracefully, once the global state has been successfully initialized.
-
-// #define TIP_GLOBAL_TOGGLE: Recording of profiling-events can be enabled and
-// disabled by setting a global toggle via tip_set_global_toggle. The toggle
-// affects all threads.
 
 //------------------------------------------------------------------------------
 //----------------------------@INTEGRATION--------------------------------------
@@ -171,16 +162,16 @@ void do_stuff(int index){
 
 // used internally
 
-#ifndef TIP_64BIT
-#define TIP_64BIT _M_X64
+#if defined(_M_X64) && !defined(TIP_64BIT)
+#define TIP_64BIT
 #endif
 
-#ifndef TIP_WINDOWS
-#define TIP_WINDOWS _MSC_VER
+#if defined(_MSC_VER) && !defined(TIP_WINDOWS)
+#define TIP_WINDOWS
 #endif
 
-#ifndef TIP_GCC
-#define TIP_GCC __GNUC__
+#if defined(__GNUC__) && !defined(TIP_GCC)
+#define TIP_GCC
 #endif
 
 TIP_API uint32_t tip_strlen(const char* string);
@@ -236,27 +227,22 @@ struct tip_Dynamic_Array{
     //why this works without taking a critical section is documented in tip_Global_State
     uint64_t growth_size = new_capacity - capacity;
 
-    if (max_growth_size == 0) {
+    while (growth_size > 0) {
       //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
-      data = (T*) TIP_REALLOC(data, size_t(sizeof(T) * new_capacity));
+      uint64_t growth_size_this_step = max_growth_size == 0 ? growth_size : tip_min(growth_size, max_growth_size);
+      auto new_data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
+
+      if (!new_data)
+        return false;
+
+      data = new_data;
+      growth_size -= growth_size_this_step;
       capacity = new_capacity;
-    }
-    else {
-      while (growth_size > 0) {
-        uint64_t growth_size_this_step = tip_min(growth_size, max_growth_size);
-        data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
-
-        if (!data)
-          return false;
-
-        growth_size -= growth_size_this_step;
-        capacity = new_capacity;
-      }
     }
 
 #else
     data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
-  TIP_ASSERT(data && "out of memory!");
+    TIP_ASSERT(data && "out of memory!");
     capacity = new_capacity;
 #endif
 
@@ -321,7 +307,7 @@ struct tip_Dynamic_Array{
     TIP_ASSERT((index + count <= size) && "You cannot remove past the end of the array!");
 
     if(index != size - count)
-      memcpy(data + index, data + index + count, ((size - count) - index) * sizeof(T));
+      memcpy(data + index, data + index + count, size_t((size - count) - index) * sizeof(T));
 
     size -= count;
   }
@@ -498,75 +484,39 @@ struct tip_Snapshot{
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// State initialization: TIP keeps global and thread local state to record
-// profiling events. This state needs to be intialized. The usual way this
-// happens is by first calling tip_global_init ONCE on application startup,
-// and then call tip_thread_init once in each thread that you want to profile.
-// 
-// If you don't have control over thread-creation or programm startup, or simply
-// don't want to be bothered by this, you can define TIP_AUTO_INIT. If you do
-// this, initialization will be automatically taken care of. Note that this
-// incurs a runtime cost, since initialization has to be checked for.
-// 
-// Every API-function or macro that may rely on the thread state and therefore
-// the global state beeing initialized will say so in its description. If 
-// TIP_AUTO_INIT is defined and such a function or macro is called, the state
-// will be initialized if needed. If TIP_AUTO_INIT is not defined these
-// functions or macros will assert that the state is initialized.
+// State: TIP keeps global and thread local state to record the profiling events.
+// This state is automatically initialized, but you can clear or reset it:
 
-TIP_API double tip_global_init();
-// Initializes the global state of TIP and returns the resolution of the clock
-// as the smallest representable interval in seconds. This function should be
-// the first call to the TIP-API that you make. If the global state was already
-// initialized, this function does nothing. If TIP_AUTO_INIT is defined, there
-// is no need to call this fuction.
-
-TIP_API bool tip_thread_init();
-// Initializes the thread-local state of TIP and should be called once, after
-// tip_global_init but before attempting to record profiling events in that
-// thread. If the thread-local state was already initialized, this function does
-// nothing. If TIP_AUTO_INIT is defined, there is no need to call this fuction.
-// If TIP_MEMORY_LIMIT is defined and initializing the thread state would have
-// violated the limit, the function returns false. Otherwise, it returns true.
-
-TIP_API void tip_clear();
+TIP_API void tip_clear_state();
 // Deletes all recorded events from the internal event buffers. Does not free
-// any memory. Threads and global state stays initialized. Existing Snapshots
-// are not affected in any way.
+// any memory. Existing snapshots are not affected in any way.
 
 
-TIP_API void tip_reset();
-// Resets the internal state completly: All recorded events are deleted, thread
-// and global state is de-initialized and needs to be initialized again before
-// use. Any dynamically allocated memory is freed, except any memory occupied by
-// snapshots. Existings Snapshots are not affected in any way.
+TIP_API void tip_reset_state();
+// Resets the internal state completly: All recorded events are deleted and any
+// dynamically allocated memory is released, except for any memory occupied by
+// snapshots. Existings snapshots are not affected in any way.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// Global toggle: if TIP_GLOBAL_TOGGLE is defined, a bool will be
-// added to the global state, that controls whether profiling events are
-// recorded. The toggle starts deactivated (false), so no profiling events will
-// be recorded until it is activated. This can be usefull if you only want to
-// profile parts of your application, or to deactivated profiling before you had
-// the chance to initialize TIP's global and thread state. Note that setting and
-// querying the global toggle is valid BEFORE calling tip_global_init.
+// Global toggle: The global toggle is a global, boolean value, thta controls
+// whether profiling events should be recorded. The toggle starts activated,
+// unless TIP_START_GLOBAL_TOGGLE_OFF is defined, in which case it will start
+// deactivated. You can use this toggle to selectivley profile your application.
 
 TIP_API void tip_set_global_toggle(bool toggle);
-// If TIP_GLOBAL_TOGGLE is defined, this function sets the state
-// global toggle. Otherwise, this function does nothing.
+// Sets the state of the global toggle.
 
 TIP_API bool tip_set_global_toggle_after_delay(bool toggle, double delay_in_seconds);
-// If TIP_GLOBAL_TOGGLE is defined, this function sets the state of the global
-// toggle on the first attempt to record a profiling zone, after the delay has
-// passed. Otherwise, this function does nothing. The zone that triggers this
-// will be evaluated against the new value of the toggle.
+// Sets the state of the global toggle on the first attempt to record an event,
+// after the delay has passed. This event will be evaluated against the new
+// toggle state.
 
 TIP_API bool tip_get_global_toggle();
-// If TIP_GLOBAL_TOGGLE is defined, this function returns the
-// current state of the global toggle. Otherwise, this function return true.
+// Returns the current state of the global toggle.
 
 //------------------------------------------------------------------------------
-TIP_API void tip_set_memory_limit(uint64_t limit_in_bytes);
+TIP_API bool tip_set_memory_limit(uint64_t limit_in_bytes);
 // If TIP_MEMORY_LIMIT is defined, this function sets a memory-limit that
 // TIP will not exceed. Otherwise this function does nothing. Any profiling
 // events that attempt to be recorded, but would exceed this limit will not be
@@ -585,12 +535,11 @@ TIP_API uint64_t tip_get_memory_limit();
 // TIP will not exceed. Otherwise, this function returns 0. A return value of 0
 // means that there is no limit.
 
-TIP_API uint64_t tip_get_current_memory_footprint();
-// Returns the current memory footprint of TIP. This includes any allocated or
-// global data, but excludes any objects on the stack.
+TIP_API int64_t tip_get_current_memory_footprint();
+// Returns the current memory footprint of TIP, or -1 if an error occurs. This
+// includes any allocated or global data, but excludes any objects on the stack.
 // If TIP_MEMORY_LIMIT is not defined, this function has to take a lock for each
 // thread that initialized thread state and may take longer to execute as a result.
-// This function relies on the global and thread state beeing initialized.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -649,8 +598,6 @@ const uint64_t tip_all_categories = UINT64_MAX;
 // These functions are used to record profiling data into a buffer, which
 // can be queried into a snapshot using tip_create_snapshot. Use them to mark
 // zones that you want profile.
-// If TIP_GLOBAL_TOGGLE is defined and the global toggle is disable, calling
-// these functions does nothing.
 // If TIP_MEMORY_LIMIT is defined, the memory limit is non-zero and recording
 // more profiling data would violate the defined limit, calling these function
 // does nothing.
@@ -681,27 +628,23 @@ const uint64_t tip_all_categories = UINT64_MAX;
 TIP_API void tip_zone_start(const char* name, uint64_t categories);
 // Starts a profiling zone with the given name and the given categories. Use
 // tip_zone_stop to stop the zone.
-// This function relies on the global and thread state beeing initialized.
 
 TIP_API void tip_zone_stop(uint64_t categories);
-// Stops the most recently started profiling zone, that was started by
+// Stops the most recently started profiling zone that was started by
 // tip_zone_start or a tip_zone...-macro.
-// This function relies on the global and thread state beeing initialized.
 
 TIP_API void tip_async_zone_start(const char* name, uint64_t categories);
 // Starts an async profiling zone with the given name and the given categories.
 // Async zones don't have to adhere to the stack-like nature of normal zones. To
 // put it formally: The number of zone-starts and -stops between the start and
-// stop of a an async zone does not have to be equal. You can for example start
-// an async zone on one thread and end it on another, or start two different
+// stop of an async zone does not have to be equal. You can for example start an
+// async zone on one thread and end it on another, or start two different
 // async zones 1 and 2 and end zone 1 before 2. This is not possible with normal
 // zones.
-// This function relies on the global and thread state beeing initialized.
 
 TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
 // Stops an async profiling zone with the same name, that was started with
 // tip_async_zone_start.
-// This function relies on the global and thread state beeing initialized.
 
 //------------------------------------------------------------------------------
 // Scoped profilers: These profilers will start a zone on the line they are
@@ -716,28 +659,25 @@ TIP_API void tip_async_zone_stop(const char* name, uint64_t categories);
 // destructor order). Internally, this starts the zone in its constructor and
 // stops in it in its destructor. The name parameter only needs to be valid
 // during the initial call, not for the entire scope.
-// This macro relies on the global and thread state beeing initialized.
 
 #define tip_zone_cond(/*const char* */ name, /*uint64_t*/ categories, /*bool*/ condition)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(name, condition, categories);
 // Behaves like tip_zone if the condition is true. Does nothing otherwise.
-// This macro relies on the global and thread state beeing initialized.
 
 #define tip_zone_function(/*uint64_t*/ categories)\
   tip_Conditional_Scope_Profiler TIP_CONCAT_STRINGS(profauto, __LINE__)(__FUNCTION__, true, categories);
 // Behaves like tip_zone with the name-argument set to the name of the surrounding function.
-// This macro relies on the global and thread state beeing initialized.
 
 
 //------------------------------------------------------------------------------
 // Utility: These function provide various utility functionality.
 
 TIP_API const char* tip_tprintf(const char* format, ...);
-// Provides sprintf-like functionality with a buffer that is managed by tip. The
-// string returned by this stays valid until the next call to tip_tprintf on the
-// same thread. The buffer is a static buffer that is of size TIP_EVENT_BUFFER_SIZE,
-// since longer names cannot be recorded into a TIP event buffer anyway. This
-// function is intended to be used to generate dynamic zone-names, like so:
+// Provides sprintf-like functionality with a constant size buffer. The string
+// returned stays valid until the next call to tip_tprintf on the same thread.
+// The buffer is of size TIP_EVENT_BUFFER_SIZE, since longer names cannot be
+// recorded into a TIP event buffer anyway. This function is intended to be used
+// to generate dynamic zone-names, like so:
 // 
 // tip_zone(tip_tprintf("%s: %s,%d", "hi", dynamic_string, i), tip_info_category);
 // tip_zone_start(tip_tprintf("zone number %d", counter), 1);
@@ -752,7 +692,6 @@ TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_even
 // lot less time when they are discarded.
 // The measurement uses a control group to gain accurate results. If you have
 // ideas on how to improve this, tell me! (I am no expert on micro-profiling).
-// This function relies on the global and thread state beeing initialized.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -819,24 +758,21 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 // own ways of saving profiling events using these low level functions.
 
 TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
-// Saves a profiling event to the buffer.
-// If TIP_GLOBAL_TOGGLE is defined and the global toggle is disabled, this
-// function does nothing.
-// If TIP_MEMORY_LIMIT is defined and saving this event would violate the memory
-// limit, this function does nothing.
-// If the categories argument does not pass the category filter, this function
-// does nothing.
-// This function relies on the global and thread state beeing initialized.
+// Saves a profiling event to the buffer, if the following conditions are met:
+//   -the global toggle is enabled
+//   -the categories argument passes the category filter
+// if TIP_MEMORY_LIMIT is defined:
+//   -saving the event would not violate the memory limit (only if
+// Otherwise, this function does nothing.
 
 TIP_API void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories);
 // Behaves like the previous function. The timestamp argument is set to the
 // current time, and the name_length_including_terminator argument is calculated
 // based off of the name argument.
-// This function relies on the global and thread state beeing initialized.
 
 TIP_API uint64_t tip_get_timestamp();
 // Returns the current time as a timestamp. The value of the timestamp is NOT in
-// seconds, but some arbitrary frequency depending on the internal clock used.
+// seconds, but some unit of time, depending on the internal clock used.
 //------------------------------------------------------------------------------
 
 // Here comes more implementation.
@@ -844,11 +780,7 @@ struct tip_Conditional_Scope_Profiler{
   int64_t condition = false;
   uint64_t categories;
   tip_Conditional_Scope_Profiler(const char* event_name, bool new_condition, uint64_t new_categories){
-
-#ifdef TIP_GLOBAL_TOGGLE
-    new_condition = new_condition && tip_get_global_toggle();
-#endif
-    if(new_condition){
+    if(new_condition && tip_get_global_toggle()){
       tip_save_profile_event(event_name, tip_Event_Type::start, new_categories);
       condition = true;
       categories = new_categories;
@@ -892,31 +824,23 @@ uint64_t tip_get_serialized_value_size(T value){
 
 
 void tip_zone_start(const char* name, uint64_t categories){
-#ifdef TIP_GLOBAL_TOGGLE
   if(tip_get_global_toggle())
-#endif
-  tip_save_profile_event(name, tip_Event_Type::start, categories);
+    tip_save_profile_event(name, tip_Event_Type::start, categories);
 }
 
 void tip_zone_stop(uint64_t categories){
-#ifdef TIP_GLOBAL_TOGGLE
   if(tip_get_global_toggle())
-#endif
-   tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
+    tip_save_profile_event(nullptr, tip_Event_Type::stop, categories);
 }
 
 void tip_async_zone_start(const char* name, uint64_t categories){
-#ifdef TIP_GLOBAL_TOGGLE
   if(tip_get_global_toggle())
-#endif
-  tip_save_profile_event(name, tip_Event_Type::start_async, categories);
+    tip_save_profile_event(name, tip_Event_Type::start_async, categories);
 }
 
 void tip_async_zone_stop(const char* name, uint64_t categories){
-#ifdef TIP_GLOBAL_TOGGLE
   if(tip_get_global_toggle())
-#endif
-  tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
+    tip_save_profile_event(name, tip_Event_Type::stop_async, categories);
 }
 
 bool operator==(tip_Event& lhs, tip_Event& rhs){
@@ -1170,24 +1094,6 @@ void tip_atomically_add_to_occupied_memory(uint64_t amount){
 #endif
 }
 
-// void tip_clear(){
-//   //@TODO make this thread-safe
-// }
-
-bool tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined(){
-  #ifdef TIP_AUTO_INIT
-    if(!tip_thread_state.initialized){
-      if(!tip_global_state.initialized){
-        tip_global_init();
-      }
-      return tip_thread_init();
-    }
-    return true;
-  #else
-    TIP_ASSERT(tip_thread_state.initialized && "TIP tried to record a profiling event, before the thread state was initialized! To get rid of this error, you can either: 1) call tip_thread_init on this thread before starting to record profiling events on it, 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization, 3) #define TIP_GLOBAL_TOGGLE and use tip_set_global_toggle to prevent recording of any profiling events until you can ensure that tip_thread_init was called. Solution 2) and 3) incur runtime cost (some more if-checks per profiling event), solution 1) does not.");
-    return tip_thread_state.initialized;
-  #endif
-}
 
 //@TODO make this thread-safe
 void tip_reset(){
@@ -1231,9 +1137,13 @@ const char* tip_tprintf(const char* format, ...){
   return tip_tprintf_buffer;
 }
 
-void tip_set_memory_limit(uint64_t limit_in_bytes){
+bool tip_check_state_is_initialized_or_initialize();
+
+bool tip_set_memory_limit(uint64_t limit_in_bytes){
 #ifdef TIP_MEMORY_LIMIT
-  tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!tip_check_state_is_initialized_or_initialize())
+    return false;
+
   tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
   
   tip_global_state.hard_memory_limit = limit_in_bytes;
@@ -1248,6 +1158,7 @@ void tip_set_memory_limit(uint64_t limit_in_bytes){
 #else
   (void) limit_in_bytes;
 #endif
+  return true;
 }
 
 uint64_t tip_get_memory_limit(){
@@ -1258,11 +1169,13 @@ uint64_t tip_get_memory_limit(){
 #endif
 }
 
-TIP_API uint64_t tip_get_current_memory_footprint(){
+TIP_API int64_t tip_get_current_memory_footprint(){
 #ifdef TIP_MEMORY_LIMIT
   return tip_global_state.occupied_memory;
 #else
-  tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!tip_check_state_is_initialized_or_initialize())
+    return -1;
+
   uint64_t occupied_memory = 0;
 
   tip_lock_mutex(tip_global_state.thread_states_mutex);
@@ -1274,25 +1187,17 @@ TIP_API uint64_t tip_get_current_memory_footprint(){
 
   tip_unlock_mutex(tip_global_state.thread_states_mutex);
 
-  return occupied_memory;
+  return int64_t(occupied_memory);
 #endif
 }
 
 
 void tip_set_global_toggle(bool toggle) {
-#ifdef TIP_GLOBAL_TOGGLE
   tip_global_state.toggle = toggle;
-#else
-  (void) toggle;
-#endif
 }
 
 bool tip_get_global_toggle() {
-#ifdef TIP_GLOBAL_TOGGLE
   return tip_global_state.toggle;
-#else
-  return true;
-#endif
 }
 
 void tip_set_category_filter(uint64_t bitmask){
@@ -1316,7 +1221,8 @@ bool tip_does_category_pass_filter(uint64_t category){
 }
 
 bool tip_set_category_name(uint64_t category_id, const char* category_name){
-  tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!tip_check_state_is_initialized_or_initialize())
+    return false;
 
   for(uint64_t i = 0; i < 64; i++){
     if(1llu << i == category_id){
@@ -1374,8 +1280,12 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
     return nullptr;
   }
 
-  tip_atomically_add_to_occupied_memory(difference_to_old_allocation_size);
-  return TIP_REALLOC(previous_allocation, (size_t) allocation_size);
+  void* new_allocation = TIP_REALLOC(previous_allocation, (size_t) allocation_size);
+
+  if(new_allocation)
+    tip_atomically_add_to_occupied_memory(difference_to_old_allocation_size);
+
+  return new_allocation;
 }
 
 void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
@@ -1441,7 +1351,8 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
 }
 
 double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64_t sample_size){
-  tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined();
+  if(!tip_check_state_is_initialized_or_initialize())
+    return -1;
   
   volatile uint64_t dummy_variable_for_measurement = 0;
 
@@ -1487,7 +1398,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 
   const uint64_t tip_info_event_size = sizeof(timestamp) + sizeof(type) + sizeof(categories);
 
-  if(!tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined())
+  if(!tip_check_state_is_initialized_or_initialize())
     return;
 
 #ifdef TIP_MEMORY_LIMIT
@@ -1543,7 +1454,7 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 }
 
 bool tip_thread_init(){
-  TIP_ASSERT(tip_global_state.initialized && "tip_thread_init was called, before the global state was initialized! To get rid of this error, you can either 1) call tip_global_init before this function, or 2) #define TIP_AUTO_INIT, which will automatically take care of state initialization. Solution 2) incurs runtime cost (an if-check per profiling event), solution 1) does not.");
+  TIP_ASSERT(tip_global_state.initialized);
 
   if(tip_thread_state.initialized)
     return true;
@@ -1622,11 +1533,21 @@ double tip_global_init(){
   return 1. / tip_global_state.clocks_per_second;
 }
 
+bool tip_check_state_is_initialized_or_initialize(){
+  if(!tip_thread_state.initialized){
+    if(!tip_global_state.initialized){
+      tip_global_init();
+    }
+    return tip_thread_init();
+  }
+  return true;
+}
+
 const char* tip_get_new_buffer_string = "TIP get new buffer";
 const char* tip_recording_halted_string = "TIP recording halted because memory limit was hit";
 
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simultaneous_events) {
-  if(!tip_assert_state_is_initialized_or_auto_initialize_if_TIP_AUTO_INIT_is_defined())
+  if(!tip_check_state_is_initialized_or_initialize())
     return {};
 
   tip_Snapshot snapshot = {};

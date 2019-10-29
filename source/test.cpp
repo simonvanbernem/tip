@@ -171,13 +171,11 @@ void log_free(void* pointer, int line){
 
 
 void main(){
-  tip_global_init();
   tip_set_category_name(1, "Kategorie 1a!");
   tip_set_category_name(2, "CCat 2");
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
   tip_set_memory_limit(2 * 1024 * 1024);
-  tip_thread_init();
   printf("%.3fMiB/%.3fMiB used.\n", double(tip_get_current_memory_footprint()) / 1024. / 1024., double(tip_get_memory_limit()) / 1024. / 1024.);
 
   tip_zone_start("vor der schleife", tip_all_categories);
