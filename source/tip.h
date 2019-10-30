@@ -196,9 +196,7 @@ T tip_max(T v0, T v1){
     return v1;
 }
 
-#ifdef TIP_MEMORY_LIMIT
-void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size);
-#endif
+void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size);
 
 
 template<typename T>
@@ -223,14 +221,13 @@ struct tip_Dynamic_Array{
     if(capacity >= new_capacity)
       return true;
 
-#ifdef TIP_MEMORY_LIMIT
     //why this works without taking a critical section is documented in tip_Global_State
     uint64_t growth_size = new_capacity - capacity;
 
     while (growth_size > 0) {
       //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
       uint64_t growth_size_this_step = max_growth_size == 0 ? growth_size : tip_min(growth_size, max_growth_size);
-      auto new_data = (T*)tip_try_realloc_with_respect_to_memory_limit(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
+      auto new_data = (T*)tip_try_realloc(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
 
       if (!new_data)
         return false;
@@ -239,12 +236,6 @@ struct tip_Dynamic_Array{
       growth_size -= growth_size_this_step;
       capacity = new_capacity;
     }
-
-#else
-    data = (T*) TIP_REALLOC(data, sizeof(T) * new_capacity);
-    TIP_ASSERT(data && "out of memory!");
-    capacity = new_capacity;
-#endif
 
     return true;
   }
@@ -1259,8 +1250,8 @@ bool tip_set_category_name(uint64_t category_id, const char* category_name){
 
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 
+void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
 #ifdef TIP_MEMORY_LIMIT
-void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
   if(tip_global_state.blocked_by_memory_limit)
     return nullptr;
 
@@ -1286,24 +1277,23 @@ void* tip_try_realloc_with_respect_to_memory_limit(void* previous_allocation, ui
     tip_atomically_add_to_occupied_memory(difference_to_old_allocation_size);
 
   return new_allocation;
-}
-
-void* tip_try_malloc_with_respect_to_memory_limit(uint64_t allocation_size){
-  return tip_try_realloc_with_respect_to_memory_limit(nullptr, allocation_size, allocation_size);
-}
-
+#else
+  return TIP_REALLOC(previous_allocation, (size_t) allocation_size);
 #endif
+}
+
+void* tip_try_malloc(uint64_t allocation_size){
+  return tip_try_realloc(nullptr, allocation_size, allocation_size);
+}
+
 
 bool tip_get_new_event_buffer(){
   auto get_buffer_start_time = tip_get_timestamp();
 
-#ifdef TIP_MEMORY_LIMIT
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) tip_try_malloc_with_respect_to_memory_limit(sizeof(tip_Event_Buffer));
+  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) tip_try_malloc(sizeof(tip_Event_Buffer));
   if(!new_buffer)
     return false;
-#else
-  tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) TIP_REALLOC(nullptr, sizeof(tip_Event_Buffer));
-#endif
+
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
   new_buffer->next_buffer = nullptr;
@@ -1438,16 +1428,12 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
 
   //we add tip_info_event_size here, because we will need to be able to record a tip_recording_halted_because_of_memory_limit_start info event into this buffer, if the allocation of the next one fails
   if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->data + TIP_EVENT_BUFFER_SIZE){
-
+    if(!tip_get_new_event_buffer()){
 #ifdef TIP_MEMORY_LIMIT
-    bool got_new_buffer = tip_get_new_event_buffer();
-    if(!got_new_buffer){
       tip_thread_state.event_balance_during_blocked++;
+#endif
       return;
     }
-#else
-    tip_get_new_event_buffer();
-#endif
   }
 
   tip_save_profile_event_without_checks(timestamp, name, name_length_including_terminator, type, categories);
@@ -1466,15 +1452,14 @@ bool tip_thread_init(){
 
   tip_lock_mutex(tip_global_state.thread_states_mutex);
 
-#ifdef TIP_MEMORY_LIMIT
   if(!tip_global_state.thread_states.insert(&tip_thread_state)){
     tip_unlock_mutex(tip_global_state.thread_states_mutex);
+    TIP_FREE(tip_thread_state.first_event_buffer);
     return false;
   }
 
+#ifdef TIP_MEMORY_LIMIT
   tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
-#else
-  tip_global_state.thread_states.insert(&tip_thread_state);
 #endif
 
   tip_unlock_mutex(tip_global_state.thread_states_mutex);
