@@ -162,15 +162,15 @@ void do_stuff(int index){
 
 // used internally
 
-#if defined(_M_X64) && !defined(TIP_64BIT)
+#ifdef _M_X64
 #define TIP_64BIT
 #endif
 
-#if defined(_MSC_VER) && !defined(TIP_WINDOWS)
+#ifdef _MSC_VER
 #define TIP_WINDOWS
 #endif
 
-#if defined(__GNUC__) && !defined(TIP_GCC)
+#ifdef __GNUC__
 #define TIP_GCC
 #endif
 
@@ -199,7 +199,7 @@ T tip_max(T v0, T v1){
 void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size);
 
 
-template<typename T>
+template<typename T, bool ingore_limit = true>
 struct tip_Dynamic_Array{
   T* data = nullptr;
   uint64_t size = 0;
@@ -227,7 +227,9 @@ struct tip_Dynamic_Array{
     while (growth_size > 0) {
       //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
       uint64_t growth_size_this_step = max_growth_size == 0 ? growth_size : tip_min(growth_size, max_growth_size);
-      auto new_data = (T*)tip_try_realloc(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T));
+      auto new_data = 0;
+
+      new_data = (T*) tip_try_realloc(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T), ingore_limit);
 
       if (!new_data)
         return false;
@@ -1250,25 +1252,27 @@ bool tip_set_category_name(uint64_t category_id, const char* category_name){
 
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 
-void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size){
+void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size, bool ingore_limit = false){
 #ifdef TIP_MEMORY_LIMIT
-  if(tip_global_state.blocked_by_memory_limit)
-    return nullptr;
+  if(!ingore_limit){
+    if(tip_global_state.blocked_by_memory_limit)
+      return nullptr;
 
-  if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + difference_to_old_allocation_size) > tip_global_state.soft_memory_limit){
-    if(tip_thread_state.initialized){
+    if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + difference_to_old_allocation_size) > tip_global_state.soft_memory_limit){
+      if(tip_thread_state.initialized){
 
-      tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-       //we check again because the value of blocked_by_memory_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
-      if(!tip_global_state.blocked_by_memory_limit && (tip_global_state.category_filter & tip_info_category))
-        tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start, tip_info_category);
+        tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
+         //we check again because the value of blocked_by_memory_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
+        if(!tip_global_state.blocked_by_memory_limit && (tip_global_state.category_filter & tip_info_category))
+          tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start, tip_info_category);
 
-      tip_global_state.blocked_by_memory_limit = true; //this gets set here to avoid the race condition
-      tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
+        tip_global_state.blocked_by_memory_limit = true; //this gets set here to avoid the race condition
+        tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
+      }
+
+      tip_global_state.blocked_by_memory_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
+      return nullptr;
     }
-
-    tip_global_state.blocked_by_memory_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
-    return nullptr;
   }
 
   void* new_allocation = TIP_REALLOC(previous_allocation, (size_t) allocation_size);
@@ -1618,6 +1622,13 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
   }
 
   tip_unlock_mutex(tip_global_state.thread_states_mutex);
+
+  uint64_t actual_events_in_snapshot = 0;
+  for (auto events : snapshot.events)
+    actual_events_in_snapshot += events.size;
+
+  TIP_ASSERT(actual_events_in_snapshot == snapshot.number_of_events);
+
   return snapshot;
 }
 
