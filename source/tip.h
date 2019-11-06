@@ -1502,10 +1502,10 @@ double tip_global_init(){
   tip_global_state.occupied_memory = 0;
   tip_global_state.soft_memory_limit = 0;
   tip_global_state.hard_memory_limit = 0;
+  tip_global_state.record_memory_limit_events_mutex = tip_create_mutex();
+  
   tip_global_state.thread_states.init(50, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice on thread init
   tip_global_state.category_name_buffer.init(500, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice when trying to insert the name
-  
-  tip_global_state.record_memory_limit_events_mutex = tip_create_mutex();
 #endif
 
   for(uint64_t i = 0; i < 64; i++)
