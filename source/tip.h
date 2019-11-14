@@ -18,9 +18,6 @@
 //    @EXAMPLES: Example programs that use various parts of TIP. If you just
 //               want to get it up and running, look here!
 // 
-//    @FEATURE TOGGLES: A List of all features of TIP that can be en-/disabled
-//                      using defines.
-// 
 //    @INTEGRATION: Macros to define things like asserts and allocation to
 //                  enable integration into your application.
 // 
@@ -114,21 +111,6 @@ void do_stuff(int index){
 
 
 //------------------------------------------------------------------------------
-//--------------------------@FEATURE TOGGLES------------------------------------
-//------------------------------------------------------------------------------
-// You can define the following values to alter the behaviour of TIP. If you
-// don't define a feature toggle, the code for that feature will not be compiled
-// and thus has no impact on the runtime performance.
-
-// #define TIP_USE_RDTSC: Makes TIP use the RDTSC instruction to measure time.
-// This is the most accurate and performant way to record the timestamps.
-// Currently, this is only supported when compiling for Win32.
-// 
-// #define TIP_MEMORY_LIMIT: Allows for the specification of a memory limit via
-// tip_set_memory_limit that TIP will not violate. Also lets TIP handle out-of-
-// memory gracefully, once the global state has been successfully initialized.
-
-//------------------------------------------------------------------------------
 //----------------------------@INTEGRATION--------------------------------------
 //------------------------------------------------------------------------------
 // To make the integration of TIP into your codebase easier, you can replace
@@ -154,7 +136,7 @@ void do_stuff(int index){
 #endif
 
 #ifndef TIP_EVENT_BUFFER_SIZE
-#define TIP_EVENT_BUFFER_SIZE 1024 * 1024
+#define TIP_EVENT_BUFFER_SIZE 1024 * 200
 #endif
 
 #include <stdint.h>
@@ -196,7 +178,7 @@ T tip_max(T v0, T v1){
     return v1;
 }
 
-void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size);
+void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size);
 
 
 template<typename T, bool ingore_limit = true>
@@ -204,10 +186,8 @@ struct tip_Dynamic_Array{
   T* data = nullptr;
   uint64_t size = 0;
   uint64_t capacity = 0;
-  uint64_t max_growth_size = 0; //0 means unlimited growth and this array wont count towards the memory limit
 
-  bool init(uint64_t initial_capacity, uint64_t initial_max_growth_size = 0){
-    max_growth_size = initial_max_growth_size;
+  bool init(uint64_t initial_capacity){
     size = 0;
     return grow_to_exact_capacity(initial_capacity);
   }
@@ -221,24 +201,13 @@ struct tip_Dynamic_Array{
     if(capacity >= new_capacity)
       return true;
 
-    //why this works without taking a critical section is documented in tip_Global_State
-    uint64_t growth_size = new_capacity - capacity;
+    T* new_data = (T*) tip_try_realloc(data, new_capacity);
 
-    while (growth_size > 0) {
-      //max_growth_size of 0 means that we don't have to care about the memory limit and can grow in arbitrarily big steps
-      uint64_t growth_size_this_step = max_growth_size == 0 ? growth_size : tip_min(growth_size, max_growth_size);
-      auto new_data = 0;
+    if (!new_data)
+      return false;
 
-      new_data = (T*) tip_try_realloc(data, (capacity + growth_size_this_step) * sizeof(T), growth_size_this_step * sizeof(T), ingore_limit);
-
-      if (!new_data)
-        return false;
-
-      data = new_data;
-      growth_size -= growth_size_this_step;
-      capacity = new_capacity;
-    }
-
+    data = new_data;
+    capacity = new_capacity;
     return true;
   }
 
@@ -433,26 +402,25 @@ struct tip_String_Interning_Hash_Table{
 TIP_API bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs);
 
 enum class tip_Event_Type{
-  start = 0,
-  stop = 1,
-  start_async = 2,
-  stop_async = 3,
-  event = 4,
+  start,
+  stop,
+  start_async,
+  stop_async,
+  event,
 
   //tip info events
-  tip_get_new_buffer_start = 5,
-  tip_get_new_buffer_stop = 6,
-  tip_recording_halted_because_of_memory_limit_start = 7,
-  tip_recording_halted_because_of_memory_limit_stop = 8,
-  tip_creating_snapshot_start = 9,
-  tip_creating_snapshot_stop = 10,
-  enum_size = 11
+  tip_get_new_buffer_start,
+  tip_get_new_buffer_stop,
+
+  enum_size
 };
 
 struct tip_Event{
   uint64_t timestamp;
-  int64_t name_id = -1; //I think this cant be unsigned, because of the string interning hashtable, I don't know though, might be wrong on this.
+  uint64_t name_length_including_terminator;
+  char* name;
   uint64_t categories;
+  uint32_t thread_id;
   tip_Event_Type type;
 };
 
@@ -480,6 +448,23 @@ struct tip_Snapshot{
 // State: TIP keeps global and thread local state to record the profiling events.
 // This state is automatically initialized, but you can clear or reset it:
 
+
+//all the functions of the event handler will always be called from a single, seperate worker thread.
+struct tip_Event_Handler{
+  using Startup_Type = void(*)(int32_t process_id, double clocks_per_second);
+  Startup_Type startup_function = nullptr; //use this to setup your event handling: Creating files / sockets, writing a preamble ...
+
+  using Shutdown_Type = void(*)();
+  Shutdown_Type shutdown_function = nullptr; //use this to finish your event handling: Closing files / sockets, writing a postamble ...
+
+  using Handle_Event_Type = void (*)(tip_Event event, int32_t process_id);
+  Handle_Event_Type handle_event_function = nullptr; //handle the actual events in here. This will get called for each event that TIP records
+};
+
+TIP_API void tip_set_event_handler(tip_Event_Handler event_handler);
+
+TIP_API void tip_sleep_until_all_events_are_handled();
+
 TIP_API void tip_clear_state();
 // Deletes all recorded events from the internal event buffers. Does not free
 // any memory. Existing snapshots are not affected in any way.
@@ -492,7 +477,7 @@ TIP_API void tip_reset_state();
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-// Global toggle: The global toggle is a global, boolean value, thta controls
+// Global toggle: The global toggle is a global, boolean value, that controls
 // whether profiling events should be recorded. The toggle starts activated,
 // unless TIP_START_GLOBAL_TOGGLE_OFF is defined, in which case it will start
 // deactivated. You can use this toggle to selectivley profile your application.
@@ -507,32 +492,6 @@ TIP_API bool tip_set_global_toggle_after_delay(bool toggle, double delay_in_seco
 
 TIP_API bool tip_get_global_toggle();
 // Returns the current state of the global toggle.
-
-//------------------------------------------------------------------------------
-TIP_API bool tip_set_memory_limit(uint64_t limit_in_bytes);
-// If TIP_MEMORY_LIMIT is defined, this function sets a memory-limit that
-// TIP will not exceed. Otherwise this function does nothing. Any profiling
-// events that attempt to be recorded, but would exceed this limit will not be
-// recorded. A value of 0 means no limit.
-// In order to begin recording profiling data again in such a sitation, either
-// the memory limit has to be increased, or the internal profiling data has to
-// be cleared. This is possible by either calling tip_create_snapshot with the
-// argument erase_snapshot_data_from_internal_state set to true, or calling
-// tip_clear_internal_profiling_data.
-// Note that no data will be deleted, if the limit is set below the current
-// memory footprint.
-// This function relies on the global and thread state beeing initialized.
-
-TIP_API uint64_t tip_get_memory_limit();
-// If TIP_MEMORY_LIMIT is defined, this function returns the memory limit, that
-// TIP will not exceed. Otherwise, this function returns 0. A return value of 0
-// means that there is no limit.
-
-TIP_API int64_t tip_get_current_memory_footprint();
-// Returns the current memory footprint of TIP, or -1 if an error occurs. This
-// includes any allocated or global data, but excludes any objects on the stack.
-// If TIP_MEMORY_LIMIT is not defined, this function has to take a lock for each
-// thread that initialized thread state and may take longer to execute as a result.
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
@@ -591,10 +550,7 @@ const uint64_t tip_all_categories = UINT64_MAX;
 // These functions are used to record profiling data into a buffer, which
 // can be queried into a snapshot using tip_create_snapshot. Use them to mark
 // zones that you want profile.
-// If TIP_MEMORY_LIMIT is defined, the memory limit is non-zero and recording
-// more profiling data would violate the defined limit, calling these function
-// does nothing.
-// 
+
 // Every once in a while, a call to these functions will take signifcantly
 // longer than usual, because TIP has to allocate a new buffer to store the
 // profiling information in. This will distort the accuracy of the data. If this
@@ -696,7 +652,7 @@ TIP_API double tip_measure_average_duration_of_recording_a_single_profiling_even
 // contains all information in a condensed and easy to process form. It is its
 // own seperate copy, and is independent of the profiler state.
 
-TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false, bool prohibit_simultaneous_events = true);
+// TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state = false, bool prohibit_simultaneous_events = true);
 // Creates a snapshot from of all profiling events recorded up to that point. A
 // snapshot contains all the profiling information in a compact format, that can
 // be output to a file.
@@ -715,10 +671,10 @@ TIP_API tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_
 // actually have)
 // This function relies on the global and thread state beeing initialized.
 
-TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
+// TIP_API void tip_free_snapshot(tip_Snapshot snapshot);
 // Frees the memory of a snapshot
 
-TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
+// TIP_API bool operator==(tip_Snapshot& lhs, tip_Snapshot& rhs);
 // Compares two snapshot for equality
 //------------------------------------------------------------------------------
 
@@ -750,18 +706,18 @@ TIP_API uint64_t tip_get_chrome_json_size_estimate(tip_Snapshot snapshot, float 
 // Low level: In case you find the interface of TIP lacking, you can create your
 // own ways of saving profiling events using these low level functions.
 
-TIP_API void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
+TIP_API bool tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 // Saves a profiling event to the buffer, if the following conditions are met:
 //   -the global toggle is enabled
 //   -the categories argument passes the category filter
-// if TIP_MEMORY_LIMIT is defined:
-//   -saving the event would not violate the memory limit (only if
 // Otherwise, this function does nothing.
+// Returns false if the event was discarded due to a failed allocation, true otherwise.
 
-TIP_API void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories);
+TIP_API bool tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories);
 // Behaves like the previous function. The timestamp argument is set to the
 // current time, and the name_length_including_terminator argument is calculated
 // based off of the name argument.
+// Returns false if the event was discarded due to a failed allocation, true otherwise.
 
 TIP_API uint64_t tip_get_timestamp();
 // Returns the current time as a timestamp. The value of the timestamp is NOT in
@@ -815,6 +771,10 @@ uint64_t tip_get_serialized_value_size(T value){
 #pragma warning(disable:4996)
 #endif
 
+#include <atomic>
+#include <cstring>
+#define dont_move_memory_accesses_below_this std::atomic_thread_fence(std::memory_order_release)
+#define dont_move_memory_accesses_above_this std::atomic_thread_fence(std::memory_order_acquire)
 
 void tip_zone_start(const char* name, uint64_t categories){
   if(tip_get_global_toggle())
@@ -837,11 +797,7 @@ void tip_async_zone_stop(const char* name, uint64_t categories){
 }
 
 bool operator==(tip_Event& lhs, tip_Event& rhs){
-  bool a = (lhs.timestamp == rhs.timestamp) && (lhs.name_id == rhs.name_id) && (lhs.type == rhs.type);
-  if (a)
-    return true;
-  else
-    return false;
+  return (lhs.timestamp == rhs.timestamp) && (lhs.name_length_including_terminator == rhs.name_length_including_terminator) && (lhs.categories == rhs.categories) && (lhs.thread_id == rhs.thread_id) && (lhs.type == rhs.type) && strncmp(lhs.name, rhs.name, lhs.name_length_including_terminator);
 }
 
 bool operator==(tip_String_Interning_Hash_Table& lhs, tip_String_Interning_Hash_Table& rhs){
@@ -890,27 +846,55 @@ bool is_type_info_event(tip_Event_Type type){
 
 #include "Windows.h"
 
-struct Mutex{
+struct tip_Mutex{
   HANDLE handle;
 };
 
-Mutex tip_create_mutex(){
-  Mutex mutex;
+tip_Mutex tip_create_mutex(){
+  tip_Mutex mutex;
   mutex.handle = CreateMutex(0, false, 0);
   return mutex;
 }
 
-void tip_destroy_mutex(Mutex mutex){
+struct tip_Signal{
+  HANDLE handle;
+};
+
+tip_Signal tip_create_signal(){
+  tip_Signal signal;
+  signal.handle = CreateEvent(nullptr, false, false, nullptr);
+  return signal;
+}
+
+void tip_activate_signal(tip_Signal signal){
+  BOOL success = SetEvent(signal.handle);
+  (void) success;
+  TIP_ASSERT(success != 0);
+}
+
+void tip_wait_on_signal(tip_Signal signal){
+  DWORD v = WaitForSingleObject(signal.handle, INFINITE);
+  (void) v;
+  TIP_ASSERT(v == WAIT_OBJECT_0);
+}
+
+bool tip_check_signal(tip_Signal signal){
+  DWORD v = WaitForSingleObject(signal.handle, 0);
+  TIP_ASSERT(v == WAIT_OBJECT_0 || v == WAIT_TIMEOUT);
+  return v == WAIT_OBJECT_0;
+}
+
+void tip_destroy_mutex(tip_Mutex mutex){
   BOOL success = CloseHandle(mutex.handle);
   (void) success;
   TIP_ASSERT(success != 0);
 }
 
-void tip_lock_mutex(Mutex mutex){
+void tip_lock_mutex(tip_Mutex mutex){
   WaitForSingleObject(mutex.handle, INFINITE);
 }
 
-void tip_unlock_mutex(Mutex mutex){
+void tip_unlock_mutex(tip_Mutex mutex){
   ReleaseMutex(mutex.handle);
 }
 
@@ -937,16 +921,38 @@ int32_t tip_get_process_id(){
   return GetCurrentProcessId();
 }
 
-uint64_t tip_get_reliable_timestamp(){
+uint64_t tip_get_qpc(){
   LARGE_INTEGER temp;
   QueryPerformanceCounter(&temp);
   return temp.QuadPart;
 }
 
-uint64_t tip_get_reliable_timestamp_frequency(){
+uint64_t tip_get_qpc_frequency(){
   LARGE_INTEGER temp;
   QueryPerformanceFrequency(&temp);
   return temp.QuadPart;
+}
+
+double tip_get_clocks_per_second(){
+  #ifdef TIP_USE_RDTSC
+    uint64_t reliable_start = tip_get_qpc();
+    uint64_t rdtsc_start = __rdtsc();
+
+    Sleep(10);
+
+    uint64_t reliable_end = tip_get_qpc();
+    uint64_t rdtsc_end = __rdtsc();
+
+    int64_t rdtsc_diff = rdtsc_end - rdtsc_start;
+    int64_t reliable_diff = reliable_end - reliable_start;
+
+    TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0 && "We got a zero or negative time interval on trying to determine the frequency of RDTSC");
+
+    double time_passed = double(reliable_diff) / double(tip_get_qpc_frequency());
+    return rdtsc_diff / time_passed;
+  #else
+    return double(tip_get_qpc_frequency());
+  #endif
 }
 
 #else //END WINDOWS IMPLEMENTATION
@@ -956,24 +962,23 @@ uint64_t tip_get_reliable_timestamp_frequency(){
 #include <thread>
 #include <map>
 
-
-struct Mutex{
+struct tip_Mutex{
   std::mutex* mutex;
 };
 
-Mutex tip_create_mutex(){
+tip_Mutex tip_create_mutex(){
   return {new std::mutex};
 }
 
-void tip_destroy_mutex(Mutex mutex){
+void tip_destroy_mutex(tip_Mutex mutex){
   delete mutex.mutex;
 }
 
-void tip_lock_mutex(Mutex mutex){
+void tip_lock_mutex(tip_Mutex mutex){
   mutex.mutex->lock();
 }
 
-void tip_unlock_mutex(Mutex mutex){
+void tip_unlock_mutex(tip_Mutex mutex){
   mutex.mutex->unlock();
 }
 
@@ -1011,107 +1016,172 @@ int32_t tip_get_process_id(){
   return 0;
 }
 
-uint64_t tip_get_reliable_timestamp(){
-  return tip_get_timestamp();
-}
-
-uint64_t tip_get_reliable_timestamp_frequency(){
-  return 1000000000;
+double tip_get_clocks_per_second(){
+  return 1000000000.;
 }
 
 #endif
 
+#include <chrono>
+#include <thread>
+
+void tip_sleep(uint64_t milliseconds){
+  std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+}
+
+struct tip_Thread{
+  std::thread t;
+};
+
+void tip_consumer_thread_main();
+
 #include <stdio.h>
 
 struct tip_Event_Buffer{
-  uint8_t* current_position;
-  uint8_t* position_of_first_event; //this is used to delete events from a buffer when making a snapshot
-  tip_Event_Buffer* next_buffer;
+  uint8_t* volatile current_position;
+  uint8_t* position_of_first_event;
+  tip_Event_Buffer* volatile next_buffer;
+  int32_t thread_id;
   uint8_t data[TIP_EVENT_BUFFER_SIZE];
 };
 
 struct tip_Thread_State{
   bool initialized = false;
   int32_t thread_id;
-
-#ifdef TIP_MEMORY_LIMIT
-  int64_t event_balance_during_blocked = 0; //Since we can't record any events if we are blocked by the memory limit (or actual memory), but we don't pass names on the close-events anymore, the whole timeline after a memory block would be completly unusable since the "event stack" so to speak would containt the wrong number of start and stop events, if a different number of start and stop events happen during the block. We wont be able to record the timestamps or names of any events during the block, but we can keep count on how many start and stop events we saw during the block, to not mess up our stack. A start event increments the balance by one, a stop events decrements. If we are positive at the end of the block, we generate dummy starts, and if we are negative, we generate dummy ends.
-#endif
-
-  tip_Event_Buffer* first_event_buffer;
-  tip_Event_Buffer* current_event_buffer;
+  tip_Event_Buffer* current_event_buffer = nullptr;
 };
 
 struct tip_Global_State{
-  bool initialized = false;
+  tip_Mutex mutex = tip_create_mutex(); //lock this mutex when you change or rely on the state of members of this struct, that are mutable after initialization.
 
-  volatile uint64_t occupied_memory = 0;
-  uint64_t category_filter = UINT64_MAX;
-  tip_Dynamic_Array<char> category_name_buffer;
-  int64_t category_name_indices[64]; //for each category possible (64 bits so 64 categories), contains the index to the start of this categories name in the category_name_buffer (or -1 if no name)
+  //members that can be accessed without taking the mutex:
+  uint64_t category_filter = UINT64_MAX; //no lock needed, race condition does not cause trouble
+  double clocks_per_second; //no lock needed, wont change after initialization
+  int32_t process_id; //no lock needed, wont change after initialization
+  bool initialized = false; //no lock needed, wont change after initialization
+  volatile bool toggle = false; //no lock needed, race condition does not cause trouble
+  volatile bool exit_consumer_thread = false; //no lock needed, race condition does not cause trouble
+  std::thread consumer_thread; //no lock needed, wont change after intialization
+  tip_Event_Handler event_handler; //no lock needed, wont change after and during initialization
 
-  bool toggle = false;
-
-#ifdef TIP_MEMORY_LIMIT
-  //memory limiting strategy: There is a hard limit and a soft lift. The hard limit is a value, that is set by the user and must not be exceeded. If we were to guarantee this by comparing the occupied memory against the hard limit, we would have to take a critical section each time we do the comparison, to guarantee that no race-condition happens (a thread might allocate memory right after an other thread has done the check but before it allocated, leading to two threads allocating memory).
-  //To work around this, we use a second limit, the soft limit, that is lower than the hard limit. The core idea is that there is a maximum upper bound of how much we would overrun the limit, if the worst-case race-condition happened. That worst case race-condition is: we have exactly enough memory so that one thread can allocate a buffer, each thread does the check but gets swapped out for another one before it does the allocation, so that all threads end up thinking they can allocate, even though there is only enough room for one more allocation. So the maximum amount of memory we would overshoot the limit in the worst case race-condition is ((#threads - 1) * maximum allocation size). If we subtract that amount from the hard limit, we get our soft limit that guarantees us that we will not overrund the hard one, even in the worst case race condition. That way we avoid taking a critical section.
-  //To actually make this happen, we have to know what the maximum allocation size can be. We only do two types of allocations: allocating an event buffer, of which the size is known and growing a dynamic array. To put an upper bound on the dynamic array growth, which normaly grows by a factor and thus has none, we introduce a limit in the data structure itsself.
-  //Once an attempt to save a profiling zone hits the limit, we set a flag that prevents any other events from beeing recorded. Since each thread has different buffers, many other events might still be able to record, but it would be very confusing to just "miss" the events of one thread while the others keep going.
-
-  uint64_t hard_memory_limit;
-  int64_t soft_memory_limit; //this can go negative if the hard limit is really low, and a new thread gets initialized. it will subtract TIP_EVENT_BUFFER_SIZE from this, which might be bigger than the hard limit itsself
-  bool blocked_by_memory_limit = false; //if the soft limit is hit, we stop recording of any events, including those that wouldn't need an allocation, because it would be super confusing if some threads would continue on recording while another one doesn't
-  Mutex record_memory_limit_events_mutex;
-#endif
-
-  int32_t process_id;
-  double clocks_per_second;
-
-  Mutex thread_states_mutex;
-  tip_Dynamic_Array<tip_Thread_State*> thread_states;
+  //members, that must not be accessed without taking the mutex:
+  tip_Dynamic_Array<char> category_name_buffer; //lock needed
+  int64_t category_name_indices[64]; //lock needed. for each category possible (64 bits so 64 categories), contains the index to the start of this categories name in the category_name_buffer (or -1 if no name)
+  tip_Dynamic_Array<tip_Event_Buffer*> first_event_buffer_of_each_thread; //lock needed
 };
+
 
 thread_local tip_Thread_State tip_thread_state;
 thread_local char tip_tprintf_buffer[TIP_EVENT_BUFFER_SIZE]; //we use this buffer for the tprint function. If vsnprintf fails due to buffer size, we know that we don't need to record that event, since it won't fit into the event buffer anyway. So we just assert and/or discard the event. It would be nicer if we could put this in the threadstate, but unfortunately this whould make it so big that a local variable thread state causes stack-overflow. That means we could not do "thread_state = {}" for example, which we need to do in tip_reset. The alternative would be to reset the members individually, which would be prone to bugs when changing the members down the line.
 static tip_Global_State tip_global_state;
 
-void tip_atomically_add_to_occupied_memory(uint64_t amount){
-#if defined(TIP_64BIT) && defined(TIP_WINDOWS)
-  _InterlockedExchangeAdd64((volatile __int64* ) &tip_global_state.occupied_memory, (__int64) amount);
-#elif defined(TIP_64BIT) && defined(TIP_GCC)
-  __sync_fetch_and_add(&tip_global_state.occupied_memory, amount);
-#else
-  tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-  tip_global_state.occupied_memory += amount;
-  tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
-#endif
+void tip_set_event_handler(tip_Event_Handler event_handler){
+  tip_lock_mutex(tip_global_state.mutex);
+
+  TIP_ASSERT(!tip_global_state.initialized && "The event handler can only be set before recording of events has started.");
+  
+  if(!tip_global_state.initialized)
+    tip_global_state.event_handler = event_handler;
+  
+  tip_unlock_mutex(tip_global_state.mutex);
+}
+
+void tip_sleep_until_all_events_are_handled(){
+  if(!tip_global_state.initialized)
+    return;
+  
+  tip_global_state.exit_consumer_thread = true;
+  tip_global_state.consumer_thread.join();
 }
 
 
-//@TODO make this thread-safe
-void tip_reset(){
-  for(auto thread_state : tip_global_state.thread_states){
-    tip_Event_Buffer* buffer = thread_state->first_event_buffer;
-    while(buffer){
-      auto next_buffer = buffer->next_buffer;
-      TIP_FREE(buffer);
-      buffer = next_buffer;
+void tip_consumer_thread_main(){
+  int events_read_in_buffer = 0;
+  int total_events_read_in_buffer = 0;
+  if(tip_global_state.event_handler.startup_function)
+    tip_global_state.event_handler.startup_function(tip_global_state.process_id, tip_global_state.clocks_per_second);
+
+  bool exit_thread = false;
+  while(!exit_thread){
+    tip_sleep(1);
+
+    exit_thread = tip_global_state.exit_consumer_thread; //we need to do one more read after we are told to finish, because there might have been events submitted between the request to exit and the last time we read.
+
+    uint64_t i = 0;
+
+    tip_lock_mutex(tip_global_state.mutex);
+
+    while(i < tip_global_state.first_event_buffer_of_each_thread.size){
+      auto event_buffer = tip_global_state.first_event_buffer_of_each_thread[i];
+      auto last_event_buffer = event_buffer;
+
+      {
+        while(last_event_buffer->next_buffer)
+          last_event_buffer = last_event_buffer->next_buffer;
+
+        tip_global_state.first_event_buffer_of_each_thread[i] = last_event_buffer;
+      }
+
+      tip_unlock_mutex(tip_global_state.mutex);
+
+      while(event_buffer != nullptr){
+        uint8_t* data_pointer = event_buffer->position_of_first_event;
+
+        dont_move_memory_accesses_above_this;
+
+        while(data_pointer != event_buffer->current_position){
+          tip_Event event;
+          event.timestamp = *((uint64_t*)data_pointer);
+          data_pointer += sizeof(event.timestamp);
+          event.type = *((tip_Event_Type*)data_pointer);
+          data_pointer += sizeof(event.type);
+          event.categories = *((uint64_t*)data_pointer);
+          data_pointer += sizeof(event.categories);
+
+          if(event.type == tip_Event_Type::start || event.type == tip_Event_Type::start_async){
+            event.name_length_including_terminator = *((uint64_t*)data_pointer);
+            data_pointer += sizeof(event.name_length_including_terminator);
+            event.name = (char*) data_pointer;
+            data_pointer += event.name_length_including_terminator;
+          }
+
+          if(event.type == tip_Event_Type::start || event.type == tip_Event_Type::stop){
+            events_read_in_buffer++;
+            total_events_read_in_buffer++;
+          }
+
+          if(tip_global_state.event_handler.handle_event_function)
+            tip_global_state.event_handler.handle_event_function(event, event_buffer->thread_id);
+        }
+
+        auto next_buffer = event_buffer->next_buffer;
+
+        if(last_event_buffer != event_buffer){
+          TIP_FREE(event_buffer);
+          printf("Events read    in last buffer(%p): %d\n", event_buffer, events_read_in_buffer);
+          events_read_in_buffer = 0;
+          event_buffer = next_buffer;
+        }
+        else{
+          event_buffer->position_of_first_event = data_pointer;
+          break;
+        }
+      }
+
+      i++;
+      tip_lock_mutex(tip_global_state.mutex);
     }
 
-    *thread_state = {};
+    tip_unlock_mutex(tip_global_state.mutex);
   }
 
-  tip_global_state.category_name_buffer.destroy();
-
-#ifdef TIP_MEMORY_LIMIT
-  tip_destroy_mutex(tip_global_state.record_memory_limit_events_mutex);
-#endif
-  tip_destroy_mutex(tip_global_state.thread_states_mutex);
-
-  tip_global_state.thread_states.destroy();
-  tip_global_state = {};
+  Sleep(1000);
+  TIP_ASSERT(tip_global_state.first_event_buffer_of_each_thread[0]->position_of_first_event == tip_global_state.first_event_buffer_of_each_thread[0]->current_position);
+  TIP_ASSERT(tip_global_state.first_event_buffer_of_each_thread[0]->next_buffer == nullptr);
+  printf("Events read    in last buffer: %d total: %d\n", events_read_in_buffer, total_events_read_in_buffer);
+  if(tip_global_state.event_handler.shutdown_function)
+    tip_global_state.event_handler.shutdown_function();
 }
-
 
 #include "stdarg.h"
 
@@ -1131,59 +1201,6 @@ const char* tip_tprintf(const char* format, ...){
 }
 
 bool tip_check_state_is_initialized_or_initialize();
-
-bool tip_set_memory_limit(uint64_t limit_in_bytes){
-#ifdef TIP_MEMORY_LIMIT
-  if(!tip_check_state_is_initialized_or_initialize())
-    return false;
-
-  tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-  
-  tip_global_state.hard_memory_limit = limit_in_bytes;
-  tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
-
-  if(tip_global_state.blocked_by_memory_limit && int64_t(tip_global_state.occupied_memory + TIP_EVENT_BUFFER_SIZE) <= tip_global_state.soft_memory_limit){
-      tip_global_state.blocked_by_memory_limit = false;
-      tip_save_profile_event(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_stop, tip_info_category);
-  }
-
-  tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
-#else
-  (void) limit_in_bytes;
-#endif
-  return true;
-}
-
-uint64_t tip_get_memory_limit(){
-#ifdef TIP_MEMORY_LIMIT
-  return tip_global_state.hard_memory_limit;
-#else
-  return 0;
-#endif
-}
-
-TIP_API int64_t tip_get_current_memory_footprint(){
-#ifdef TIP_MEMORY_LIMIT
-  return tip_global_state.occupied_memory;
-#else
-  if(!tip_check_state_is_initialized_or_initialize())
-    return -1;
-
-  uint64_t occupied_memory = 0;
-
-  tip_lock_mutex(tip_global_state.thread_states_mutex);
-
-  for(auto thread_state : tip_global_state.thread_states){
-    for(auto event_buffer = thread_state->first_event_buffer; event_buffer; event_buffer = event_buffer->next_buffer)
-      occupied_memory += TIP_EVENT_BUFFER_SIZE;
-  }
-
-  tip_unlock_mutex(tip_global_state.thread_states_mutex);
-
-  return int64_t(occupied_memory);
-#endif
-}
-
 
 void tip_set_global_toggle(bool toggle) {
   tip_global_state.toggle = toggle;
@@ -1248,64 +1265,33 @@ bool tip_set_category_name(uint64_t category_id, const char* category_name){
   return false;
 }
 
-
-
 void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories);
 
-void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size, uint64_t difference_to_old_allocation_size, bool ingore_limit = false){
-#ifdef TIP_MEMORY_LIMIT
-  if(!ingore_limit){
-    if(tip_global_state.blocked_by_memory_limit)
-      return nullptr;
-
-    if(tip_global_state.hard_memory_limit != 0 && int64_t(tip_global_state.occupied_memory + difference_to_old_allocation_size) > tip_global_state.soft_memory_limit){
-      if(tip_thread_state.initialized){
-
-        tip_lock_mutex(tip_global_state.record_memory_limit_events_mutex);
-         //we check again because the value of blocked_by_memory_limit might have changed (race condition). The reason why we check for it twice anyway is so that we only have to take the lock when the race condition occurs (which will happen only very rarely if ever) or we legitly can record the even
-        if(!tip_global_state.blocked_by_memory_limit && (tip_global_state.category_filter & tip_info_category))
-          tip_save_profile_event_without_checks(tip_get_timestamp(), nullptr, 0, tip_Event_Type::tip_recording_halted_because_of_memory_limit_start, tip_info_category);
-
-        tip_global_state.blocked_by_memory_limit = true; //this gets set here to avoid the race condition
-        tip_unlock_mutex(tip_global_state.record_memory_limit_events_mutex);
-      }
-
-      tip_global_state.blocked_by_memory_limit = true; //we still want to set this even if the thread is not initialized to make the second time hitting this quicker
-      return nullptr;
-    }
-  }
-
-  void* new_allocation = TIP_REALLOC(previous_allocation, (size_t) allocation_size);
-
-  if(new_allocation)
-    tip_atomically_add_to_occupied_memory(difference_to_old_allocation_size);
-
-  return new_allocation;
-#else
+void* tip_try_realloc(void* previous_allocation, uint64_t allocation_size){
   return TIP_REALLOC(previous_allocation, (size_t) allocation_size);
-#endif
 }
 
 void* tip_try_malloc(uint64_t allocation_size){
-  return tip_try_realloc(nullptr, allocation_size, allocation_size);
+  return tip_try_realloc(nullptr, allocation_size);
 }
 
-
-bool tip_get_new_event_buffer(){
+bool tip_set_new_event_buffer_as_current_buffer(){
   auto get_buffer_start_time = tip_get_timestamp();
 
   tip_Event_Buffer* new_buffer = (tip_Event_Buffer*) tip_try_malloc(sizeof(tip_Event_Buffer));
-  if(!new_buffer)
+  if(!new_buffer){
+    printf("MALLOC FAILED!\n");
     return false;
+  }
 
   new_buffer->current_position = new_buffer->data;
   new_buffer->position_of_first_event = new_buffer->data;
   new_buffer->next_buffer = nullptr;
 
-  if (tip_thread_state.current_event_buffer)
+  dont_move_memory_accesses_below_this;
+
+  if(tip_thread_state.current_event_buffer)
     tip_thread_state.current_event_buffer->next_buffer = new_buffer;
-  else
-    tip_thread_state.first_event_buffer = new_buffer;
 
   tip_thread_state.current_event_buffer = new_buffer;
 
@@ -1338,6 +1324,8 @@ void tip_save_profile_event_without_checks(uint64_t timestamp, const char* name,
     memcpy(data_pointer, name, (size_t) name_length_including_terminator);
     data_pointer += name_length_including_terminator;
   }
+
+  dont_move_memory_accesses_below_this;
 
   buffer->current_position = data_pointer;
 
@@ -1377,47 +1365,27 @@ double tip_measure_average_duration_of_recording_a_single_profiling_event(uint64
   return -1;
 }
 
-void tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories){
+bool tip_save_profile_event(const char* name, tip_Event_Type type, uint64_t categories){
   auto timestamp = tip_get_timestamp();
   uint64_t name_length_including_terminator = 0;
   if(name)
     name_length_including_terminator = strlen(name) + 1;
 
-  tip_save_profile_event(timestamp, name, name_length_including_terminator, type, categories);
+  return tip_save_profile_event(timestamp, name, name_length_including_terminator, type, categories);
 }
 
-void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories){
+static int events_in_buffer = 0;
+static int total_events_in_buffers = 0;
+
+bool tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_length_including_terminator, tip_Event_Type type, uint64_t categories){
+  
   if(!(categories & tip_global_state.category_filter))
-    return;
+    return true;
 
   const uint64_t tip_info_event_size = sizeof(timestamp) + sizeof(type) + sizeof(categories);
 
   if(!tip_check_state_is_initialized_or_initialize())
-    return;
-
-#ifdef TIP_MEMORY_LIMIT
-  if(tip_global_state.blocked_by_memory_limit){
-    if(type == tip_Event_Type::start)
-      tip_thread_state.event_balance_during_blocked++;
-    else if(type == tip_Event_Type::stop)
-      tip_thread_state.event_balance_during_blocked--;
-    return;
-  }
-
-  if(tip_thread_state.event_balance_during_blocked != 0){ //@BUG @TODO @RACE CONDITION
-    int64_t balance = tip_thread_state.event_balance_during_blocked;
-    tip_thread_state.event_balance_during_blocked = 0;
-    if(balance > 0){
-      for(int64_t i = 0; i < balance; i++)
-        tip_save_profile_event(timestamp, nullptr, 0, tip_Event_Type::stop, tip_all_categories);
-    }
-    else{
-      const char* temp_name = "UNKNOWN ZONE";
-      for(int64_t i = 0; i > balance; i--)
-        tip_save_profile_event(timestamp, temp_name, tip_strlen(temp_name) + 1, tip_Event_Type::start, tip_all_categories);
-    }
-  }
-#endif
+    return false;
 
   uint64_t event_size;
 
@@ -1426,21 +1394,28 @@ void tip_save_profile_event(uint64_t timestamp, const char* name, uint64_t name_
   else
     event_size = sizeof(timestamp) + sizeof(type) + sizeof(categories) + sizeof(name_length_including_terminator) + name_length_including_terminator;
 
-  // we need enough space in each new buffer to store at least four info events (if TIP_MEMORY_LIMIT is defined, 2 otherwise), besides the user-event in it:
+  // we need enough space in each new buffer to store at least two info events, besides the user-event in it:
   // tip_get_new_buffer_start, tip_get_new_buffer_stop, tip_recording_halted_because_of_memory_limit_start and tip_recording_halted_because_of_memory_limit_stop
-  TIP_ASSERT(event_size + tip_info_event_size * 4 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TIP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
+  TIP_ASSERT(event_size + tip_info_event_size * 2 < TIP_EVENT_BUFFER_SIZE && "This name is too long for the current TIP_EVENT_BUFFER_SIZE. To fix this, increase TIP_EVENT_BUFFER_SIZE or choose a shorter name. Trying to save this event would cause an infinite loop, because there wouldn't be enough space left in a newly allocated buffer to store the event, after TIP has put its profiling information about allocating the buffer into it.");
 
   //we add tip_info_event_size here, because we will need to be able to record a tip_recording_halted_because_of_memory_limit_start info event into this buffer, if the allocation of the next one fails
   if(event_size + tip_info_event_size + tip_thread_state.current_event_buffer->current_position > tip_thread_state.current_event_buffer->data + TIP_EVENT_BUFFER_SIZE){
-    if(!tip_get_new_event_buffer()){
-#ifdef TIP_MEMORY_LIMIT
-      tip_thread_state.event_balance_during_blocked++;
-#endif
-      return;
+    printf("Events written in last buffer(%p): %d\n", tip_thread_state.current_event_buffer, events_in_buffer);
+    events_in_buffer = 0;
+
+    if(!tip_set_new_event_buffer_as_current_buffer()){
+      return false;
     }
   }
 
   tip_save_profile_event_without_checks(timestamp, name, name_length_including_terminator, type, categories);
+  events_in_buffer++;
+  total_events_in_buffers++;
+  return true;
+}
+
+void tip_debug_print_events_written(){
+    printf("Events written in last buffer(%p): %d total: %d\n", tip_thread_state.current_event_buffer, events_in_buffer, total_events_in_buffers);
 }
 
 bool tip_thread_init(){
@@ -1451,26 +1426,24 @@ bool tip_thread_init(){
 
   tip_thread_state.thread_id = tip_get_thread_id();
 
-  if(!tip_get_new_event_buffer())
+  if(!tip_set_new_event_buffer_as_current_buffer())
     return false;
 
-  tip_lock_mutex(tip_global_state.thread_states_mutex);
+  tip_lock_mutex(tip_global_state.mutex);
+  bool could_insert_buffer = tip_global_state.first_event_buffer_of_each_thread.insert(tip_thread_state.current_event_buffer);
+  tip_unlock_mutex(tip_global_state.mutex);
 
-  if(!tip_global_state.thread_states.insert(&tip_thread_state)){
-    tip_unlock_mutex(tip_global_state.thread_states_mutex);
-    TIP_FREE(tip_thread_state.first_event_buffer);
-    return false;
+  if(!could_insert_buffer){
+    tip_thread_state.current_event_buffer = nullptr;
+    TIP_FREE(tip_thread_state.current_event_buffer);
   }
+  else
+    tip_thread_state.initialized = true;
 
-#ifdef TIP_MEMORY_LIMIT
-  tip_global_state.soft_memory_limit = tip_global_state.hard_memory_limit - TIP_EVENT_BUFFER_SIZE * (tip_global_state.thread_states.size - 1);
-#endif
-
-  tip_unlock_mutex(tip_global_state.thread_states_mutex);
-
-  tip_thread_state.initialized = true;
-  return true;
+  return could_insert_buffer;
 }
+
+#include <thread>
 
 double tip_global_init(){
   static_assert(TIP_EVENT_BUFFER_SIZE > 128, "TIP_EVENT_BUFFER_SIZE must be at least 128 bytes big. TIP makes various assumptions that rely on that, for example, that a newly allocated buffer is always big enough to hold two events that record that buffers creation time.");
@@ -1478,35 +1451,14 @@ double tip_global_init(){
   if(tip_global_state.initialized)
     return 1. / tip_global_state.clocks_per_second;
 
-#if defined(TIP_USE_RDTSC) && defined(TIP_WINDOWS)
-  uint64_t reliable_start = tip_get_reliable_timestamp();
-  uint64_t rdtsc_start = __rdtsc();
+  tip_lock_mutex(tip_global_state.mutex);
 
-  Sleep(10);
+  if(tip_global_state.initialized){
+    tip_unlock_mutex(tip_global_state.mutex); //another thread might have initialized the global state while we waited on the mutex
+    return 1. / tip_global_state.clocks_per_second;
+  }
 
-  uint64_t reliable_end = tip_get_reliable_timestamp();
-  uint64_t rdtsc_end = __rdtsc();
-
-  int64_t rdtsc_diff = rdtsc_end - rdtsc_start;
-  int64_t reliable_diff = reliable_end - reliable_start;
-
-  TIP_ASSERT(rdtsc_diff > 0 && reliable_diff > 0 && "We got a zero or negative time interval on trying to determine the frequency of RDTSC");
-
-  double time_passed = double(reliable_diff) / double(tip_get_reliable_timestamp_frequency());
-  tip_global_state.clocks_per_second = rdtsc_diff / time_passed;
-#else
-  tip_global_state.clocks_per_second = double(tip_get_reliable_timestamp_frequency());
-#endif
-
-#ifdef TIP_MEMORY_LIMIT
-  tip_global_state.occupied_memory = 0;
-  tip_global_state.soft_memory_limit = 0;
-  tip_global_state.hard_memory_limit = 0;
-  tip_global_state.record_memory_limit_events_mutex = tip_create_mutex();
-  
-  tip_global_state.thread_states.init(50, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice on thread init
-  tip_global_state.category_name_buffer.init(500, TIP_EVENT_BUFFER_SIZE); //if we fail to allocate here, we will notice when trying to insert the name
-#endif
+  tip_global_state.clocks_per_second = tip_get_clocks_per_second();
 
   for(uint64_t i = 0; i < 64; i++)
     tip_global_state.category_name_indices[i] = -1;
@@ -1518,7 +1470,11 @@ double tip_global_init(){
 
   tip_global_state.process_id = tip_get_process_id();
   tip_global_state.initialized = true;
-  tip_global_state.thread_states_mutex = tip_create_mutex();
+
+  tip_global_state.consumer_thread = std::thread(&tip_consumer_thread_main);
+
+  tip_unlock_mutex(tip_global_state.mutex);
+
   return 1. / tip_global_state.clocks_per_second;
 }
 
@@ -1534,7 +1490,7 @@ bool tip_check_state_is_initialized_or_initialize(){
 
 const char* tip_get_new_buffer_string = "TIP get new buffer";
 const char* tip_recording_halted_string = "TIP recording halted because memory limit was hit";
-
+/*
 tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, bool prohibit_simultaneous_events) {
   if(!tip_check_state_is_initialized_or_initialize())
     return {};
@@ -1631,7 +1587,6 @@ tip_Snapshot tip_create_snapshot(bool erase_snapshot_data_from_internal_state, b
 
   return snapshot;
 }
-
 void tip_escape_string_for_json(const char* string, tip_Dynamic_Array<char>* array){
   array->clear();
   for(int i = 0; string[i]; i++){
@@ -1699,9 +1654,10 @@ int64_t tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, const char* fi
   fclose(file);
   return file_size;
 }
+*/
 
 #include "stdarg.h"
-
+/*
 tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot, bool profile_export_and_include_in_the_output){
   if(snapshot.number_of_events == 0)
     return {};
@@ -1886,7 +1842,7 @@ tip_Dynamic_Array<char> tip_export_snapshot_to_chrome_json(tip_Snapshot snapshot
 
   return file_buffer;
 }
-
+*/
 void tip_free_snapshot(tip_Snapshot snapshot){
   snapshot.names.name_buffer.destroy();
   snapshot.names.name_indices.destroy();
